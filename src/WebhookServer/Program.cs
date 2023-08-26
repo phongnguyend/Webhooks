@@ -13,7 +13,7 @@ app.MapPost("/test", async (HttpRequest request) =>
     return Results.Text(text, "application/json");
 });
 
-app.MapGet("/", () => requests);
+app.MapGet("/", () => requests.OrderByDescending(x => x.RecievedDate));
 
 app.MapGet("/reset", () =>
 {
