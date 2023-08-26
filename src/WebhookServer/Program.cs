@@ -15,6 +15,12 @@ app.MapPost("/test", async (HttpRequest request) =>
 
 app.MapGet("/", () => requests);
 
+app.MapGet("/reset", () =>
+{
+    requests.Clear();
+    return Results.Redirect("/");
+});
+
 app.Run();
 
 class RecivedRequest
