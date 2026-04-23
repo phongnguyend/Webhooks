@@ -41,3 +41,6 @@ Accept: application/json
 
 ### Delete requests for a topic
 DELETE {{WebhookServer_HostAddress}}/tenants/tenant-1/topics/orders
+
+### Health check
+GET {{WebhookServer_HostAddress}}/healthz

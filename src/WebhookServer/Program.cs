@@ -3,6 +3,8 @@ var app = builder.Build();
 
 var requests = new List<ReceivedRequest>();
 
+app.MapGet("/healthz", () => Results.Ok(new { status = "Healthy" }));
+
 app.MapPost("/test", async (HttpRequest request) =>
 {
     using var reader = new StreamReader(request.Body);
