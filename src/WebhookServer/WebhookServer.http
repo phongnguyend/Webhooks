@@ -23,7 +23,7 @@ Content-Type: application/json
 ###
 
 ### Post to a topic
-POST {{WebhookServer_HostAddress}}/topics/orders
+POST {{WebhookServer_HostAddress}}/tenants/tenant-1/topics/orders
 Content-Type: application/json
 
 {
@@ -34,10 +34,10 @@ Content-Type: application/json
 ###
 
 ### Get requests for a topic
-GET {{WebhookServer_HostAddress}}/topics/orders
+GET {{WebhookServer_HostAddress}}/tenants/tenant-1/topics/orders
 Accept: application/json
 
 ###
 
 ### Delete requests for a topic
-DELETE {{WebhookServer_HostAddress}}/topics/orders
+DELETE {{WebhookServer_HostAddress}}/tenants/tenant-1/topics/orders
