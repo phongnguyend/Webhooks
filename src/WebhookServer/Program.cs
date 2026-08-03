@@ -25,6 +25,12 @@ app.MapGet("/reset", () =>
 
 app.MapPost("/tenants/{tenantId}/topics/{topicName}", async (string tenantId, string topicName, HttpRequest request) =>
 {
+    // Validation request
+    if (topicName == "sharepoint" && request.Query.ContainsKey("validationtoken"))
+    {
+        return Results.Text(request.Query["validationtoken"], "text/plain");
+    }
+
     using var reader = new StreamReader(request.Body);
     string text = await reader.ReadToEndAsync();
 
