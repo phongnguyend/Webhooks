@@ -1,19 +1,21 @@
+using Microsoft.AspNetCore.SignalR;
+
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddSignalR();
+builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
+    .WithOrigins("http://localhost:5173")
+    .AllowAnyHeader()
+    .AllowAnyMethod()
+    .AllowCredentials()));
+
 var app = builder.Build();
+
+app.UseCors();
 
 var requests = new List<ReceivedRequest>();
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "Healthy" }));
-
-app.MapPost("/test", async (HttpRequest request) =>
-{
-    using var reader = new StreamReader(request.Body);
-    string text = await reader.ReadToEndAsync();
-
-    requests.Add(new ReceivedRequest { TopicName = "test", Payload = text, ReceivedAt = DateTimeOffset.Now });
-
-    return Results.Text(text, "application/json");
-});
 
 app.MapGet("/", () => requests.OrderByDescending(x => x.ReceivedAt));
 
@@ -23,7 +25,11 @@ app.MapGet("/reset", () =>
     return Results.Redirect("/");
 });
 
-app.MapPost("/tenants/{tenantId}/topics/{topicName}", async (string tenantId, string topicName, HttpRequest request) =>
+app.MapPost("/tenants/{tenantId}/topics/{topicName}", async (
+    string tenantId,
+    string topicName,
+    HttpRequest request,
+    IHubContext<WebhookHub> hub) =>
 {
     // Validation request
     if (topicName == "sharepoint" && request.Query.ContainsKey("validationtoken"))
@@ -34,7 +40,17 @@ app.MapPost("/tenants/{tenantId}/topics/{topicName}", async (string tenantId, st
     using var reader = new StreamReader(request.Body);
     string text = await reader.ReadToEndAsync();
 
-    requests.Add(new ReceivedRequest { TenantId = tenantId, TopicName = topicName, Payload = text, ReceivedAt = DateTimeOffset.Now });
+    var receivedRequest = new ReceivedRequest
+    {
+        Id = Guid.NewGuid(),
+        TenantId = tenantId,
+        TopicName = topicName,
+        Payload = text,
+        ReceivedAt = DateTimeOffset.Now
+    };
+
+    requests.Add(receivedRequest);
+    await hub.Clients.All.SendAsync("WebhookReceived", receivedRequest);
 
     return Results.Text(text, "application/json");
 });
@@ -49,10 +65,14 @@ app.MapDelete("/tenants/{tenantId}/topics/{topicName}", (string tenantId, string
     return Results.Ok();
 });
 
+app.MapHub<WebhookHub>("/hubs/events");
+
 app.Run();
 
 class ReceivedRequest
 {
+    public Guid Id { get; set; }
+
     public string? TenantId { get; set; }
 
     public string? TopicName { get; set; }
@@ -61,3 +81,5 @@ class ReceivedRequest
 
     public string? Payload { get; set; }
 }
+
+class WebhookHub : Hub;

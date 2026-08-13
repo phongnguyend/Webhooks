@@ -1,4 +1,4 @@
-@WebhookServer_HostAddress = https://localhost:7180
+@WebhookServer_HostAddress = http://localhost:5229
 
 ### Get all received requests
 GET {{WebhookServer_HostAddress}}/
@@ -8,17 +8,6 @@ Accept: application/json
 
 ### Reset all received requests
 GET {{WebhookServer_HostAddress}}/reset
-
-###
-
-### Post to /test endpoint
-POST {{WebhookServer_HostAddress}}/test
-Content-Type: application/json
-
-{
-  "event": "test_event",
-  "data": "sample payload"
-}
 
 ###
 
