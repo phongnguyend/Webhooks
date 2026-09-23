@@ -36,6 +36,9 @@ namespace WebhookServer.Data.Migrations
                     Name = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
                     IsEnabled = table.Column<bool>(type: "bit", nullable: false),
                     IsSharePointWebhook = table.Column<bool>(type: "bit", nullable: false),
+                    UseManagedIdentity = table.Column<bool>(type: "bit", nullable: false),
+                    FullyQualifiedNamespace = table.Column<string>(type: "nvarchar(300)", maxLength: 300, nullable: true),
+                    ServiceBusConnectionString = table.Column<string>(type: "nvarchar(2000)", maxLength: 2000, nullable: true),
                     ServiceBusTopicName = table.Column<string>(type: "nvarchar(260)", maxLength: 260, nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false)
@@ -50,12 +53,6 @@ namespace WebhookServer.Data.Migrations
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
                 });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Topics_ServiceBusTopicName",
-                table: "Topics",
-                column: "ServiceBusTopicName",
-                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_Topics_TenantId_Key",

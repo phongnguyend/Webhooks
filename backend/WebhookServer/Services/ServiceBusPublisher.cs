@@ -1,30 +1,18 @@
+using System.Collections.Concurrent;
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 
 namespace WebhookServer.Services;
 
-public sealed class ServiceBusOptions
-{
-    public const string SectionName = "ServiceBus";
-    public bool UseManagedIdentity { get; set; }
-    public string? FullyQualifiedNamespace { get; set; }
-    public string? ConnectionString { get; set; }
-}
-
 public sealed class ServiceBusPublisher : IAsyncDisposable
 {
-    private readonly ServiceBusClient _client;
-
-    public ServiceBusPublisher(ServiceBusOptions options)
-    {
-        _client = options.UseManagedIdentity
-            ? new ServiceBusClient(NormalizeNamespace(options.FullyQualifiedNamespace
-                ?? throw new InvalidOperationException("ServiceBus:FullyQualifiedNamespace is required when managed identity is enabled.")), new DefaultAzureCredential())
-            : new ServiceBusClient(options.ConnectionString
-                ?? throw new InvalidOperationException("ServiceBus:ConnectionString is required when managed identity is disabled."));
-    }
+    private readonly ConcurrentDictionary<string, ServiceBusClient> _connectionStringClients = new();
+    private readonly ConcurrentDictionary<string, ServiceBusClient> _managedIdentityClients = new();
 
     public async Task PublishAsync(
+        bool useManagedIdentity,
+        string? fullyQualifiedNamespace,
+        string? connectionString,
         string serviceBusTopicName,
         string body,
         Guid tenantId,
@@ -32,7 +20,15 @@ public sealed class ServiceBusPublisher : IAsyncDisposable
         string? contentType,
         CancellationToken cancellationToken)
     {
-        await using var sender = _client.CreateSender(serviceBusTopicName);
+        var client = useManagedIdentity
+            ? _managedIdentityClients.GetOrAdd(
+                fullyQualifiedNamespace!,
+                value => new ServiceBusClient(value, new DefaultAzureCredential()))
+            : _connectionStringClients.GetOrAdd(
+                connectionString!,
+                value => new ServiceBusClient(value));
+
+        await using var sender = client.CreateSender(serviceBusTopicName);
         var message = new ServiceBusMessage(body)
         {
             ContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType,
@@ -43,8 +39,11 @@ public sealed class ServiceBusPublisher : IAsyncDisposable
         await sender.SendMessageAsync(message, cancellationToken);
     }
 
-    public ValueTask DisposeAsync() => _client.DisposeAsync();
-
-    private static string NormalizeNamespace(string value) =>
-        value.Trim().Replace("https://", "", StringComparison.OrdinalIgnoreCase).TrimEnd('/');
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var client in _connectionStringClients.Values.Concat(_managedIdentityClients.Values))
+        {
+            await client.DisposeAsync();
+        }
+    }
 }

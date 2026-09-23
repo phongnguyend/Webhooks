@@ -58,6 +58,10 @@ namespace WebhookServer.Data.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<string>("FullyQualifiedNamespace")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("bit");
 
@@ -74,6 +78,10 @@ namespace WebhookServer.Data.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<string>("ServiceBusConnectionString")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
                     b.Property<string>("ServiceBusTopicName")
                         .IsRequired()
                         .HasMaxLength(260)
@@ -85,10 +93,10 @@ namespace WebhookServer.Data.Migrations
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("datetimeoffset");
 
-                    b.HasKey("Id");
+                    b.Property<bool>("UseManagedIdentity")
+                        .HasColumnType("bit");
 
-                    b.HasIndex("ServiceBusTopicName")
-                        .IsUnique();
+                    b.HasKey("Id");
 
                     b.HasIndex("TenantId", "Key")
                         .IsUnique();

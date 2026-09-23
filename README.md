@@ -1,14 +1,13 @@
 # Webhook Hub
 
-An ASP.NET Core and React application for managing tenant-specific webhook routes. Incoming payloads are published to configured topics on one shared Azure Service Bus namespace and shown in a live SignalR event inspector.
+An ASP.NET Core and React application for managing tenant-specific webhook routes. Each route can publish to any Azure Service Bus namespace and topic, and successful messages are shown in a live SignalR event inspector.
 
 ## Features
 
 - Create, edit, delete, enable, and disable tenants.
 - Create, edit, delete, enable, and disable topic routes within each tenant.
-- Map every route to a destination topic on a shared Azure Service Bus.
-- Automatically derive every Azure Service Bus topic name as `{tenantId}-{topicKey}`.
-- Authenticate to Service Bus with either managed identity or a connection string.
+- Map every route to any Azure Service Bus namespace and topic.
+- Select managed identity or connection-string authentication per topic route.
 - Persist configuration with EF Core and SQL Server.
 - No user authentication is enabled yet.
 
@@ -18,21 +17,9 @@ Requirements: .NET 10, Node.js, and SQL Server LocalDB (or another local SQL Ser
 
 The development database connection is in `backend/WebhookServer/appsettings.Development.json`. Override it with `ConnectionStrings__DefaultConnection` if LocalDB is not available.
 
-Configure the shared Service Bus through user secrets or environment variables. Connection-string mode:
+Configure the namespace, topic name, and authentication method for each topic route in the UI. For managed identity, Azure CLI or Visual Studio credentials are also considered locally by `DefaultAzureCredential`. The identity needs the **Azure Service Bus Data Sender** role on the destination namespace or topic. Topic entities must already exist; this app configures routes but does not provision Service Bus resources.
 
-```powershell
-$env:ServiceBus__UseManagedIdentity = "false"
-$env:ServiceBus__ConnectionString = "Endpoint=sb://..."
-```
-
-Managed-identity mode (Azure CLI or Visual Studio credentials are also considered locally by `DefaultAzureCredential`):
-
-```powershell
-$env:ServiceBus__UseManagedIdentity = "true"
-$env:ServiceBus__FullyQualifiedNamespace = "my-namespace.servicebus.windows.net"
-```
-
-The identity needs the **Azure Service Bus Data Sender** role on the namespace or destination topics. Topic entities must already exist; this app configures routes but does not provision Service Bus resources.
+Connection strings are stored in SQL Server so the API can publish, but are never returned by its management endpoints. Protect database access and use narrowly scoped Service Bus credentials.
 
 Start the API and frontend:
 
@@ -54,8 +41,6 @@ Use environment variables or your hosting platform's secure configuration rather
 
 ```text
 ConnectionStrings__DefaultConnection=<Azure SQL connection string>
-ServiceBus__UseManagedIdentity=true
-ServiceBus__FullyQualifiedNamespace=my-namespace.servicebus.windows.net
 Cors__AllowedOrigins__0=https://webhooks.example.com
 ```
 

@@ -12,9 +12,6 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
     ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is required.");
 
 builder.Services.AddDbContext<WebhookDbContext>(options => options.UseSqlServer(connectionString));
-var serviceBusOptions = builder.Configuration.GetSection(ServiceBusOptions.SectionName).Get<ServiceBusOptions>()
-    ?? throw new InvalidOperationException("ServiceBus configuration is required.");
-builder.Services.AddSingleton(serviceBusOptions);
 builder.Services.AddSingleton<ServiceBusPublisher>();
 builder.Services.AddSingleton<ConcurrentQueue<ReceivedRequest>>();
 builder.Services.AddSignalR();
@@ -94,7 +91,7 @@ tenants.MapGet("/{tenantId:guid}/topics", async (Guid tenantId, WebhookDbContext
 
 tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest request, WebhookDbContext db, CancellationToken ct) =>
 {
-    var error = ValidateTopic(request);
+    var error = ValidateTopic(request, isCreate: true, hasStoredConnection: false);
     if (error is not null) return error;
     if (!await db.Tenants.AnyAsync(x => x.Id == tenantId, ct)) return Results.NotFound();
     var key = NormalizeKey(request.Key);
@@ -105,7 +102,10 @@ tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest re
     {
         TenantId = tenantId, Key = key, Name = request.Name.Trim(), IsEnabled = request.IsEnabled,
         IsSharePointWebhook = request.IsSharePointWebhook,
-        ServiceBusTopicName = BuildServiceBusTopicName(tenantId, key)
+        UseManagedIdentity = request.UseManagedIdentity,
+        FullyQualifiedNamespace = request.UseManagedIdentity ? NormalizeNamespace(request.FullyQualifiedNamespace!) : null,
+        ServiceBusConnectionString = request.UseManagedIdentity ? null : request.ServiceBusConnectionString!.Trim(),
+        ServiceBusTopicName = request.ServiceBusTopicName.Trim()
     };
     db.Topics.Add(topic);
     await db.SaveChangesAsync(ct);
@@ -116,7 +116,7 @@ tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, G
 {
     var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId, ct);
     if (topic is null) return Results.NotFound();
-    var error = ValidateTopic(request);
+    var error = ValidateTopic(request, isCreate: false, hasStoredConnection: !string.IsNullOrWhiteSpace(topic.ServiceBusConnectionString));
     if (error is not null) return error;
     var key = NormalizeKey(request.Key);
     if (await db.Topics.AnyAsync(x => x.TenantId == tenantId && x.Id != topicId && x.Key == key, ct))
@@ -126,7 +126,11 @@ tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, G
     topic.Name = request.Name.Trim();
     topic.IsEnabled = request.IsEnabled;
     topic.IsSharePointWebhook = request.IsSharePointWebhook;
-    topic.ServiceBusTopicName = BuildServiceBusTopicName(tenantId, key);
+    topic.UseManagedIdentity = request.UseManagedIdentity;
+    topic.FullyQualifiedNamespace = request.UseManagedIdentity ? NormalizeNamespace(request.FullyQualifiedNamespace!) : null;
+    topic.ServiceBusTopicName = request.ServiceBusTopicName.Trim();
+    if (request.UseManagedIdentity) topic.ServiceBusConnectionString = null;
+    else if (!string.IsNullOrWhiteSpace(request.ServiceBusConnectionString)) topic.ServiceBusConnectionString = request.ServiceBusConnectionString.Trim();
     topic.UpdatedAt = DateTimeOffset.UtcNow;
     await db.SaveChangesAsync(ct);
     return Results.Ok(ToTopicResponse(topic));
@@ -171,7 +175,8 @@ app.MapPost("/tenants/{tenantId:guid}/topics/{topicKey}", async (
     var body = await reader.ReadToEndAsync(ct);
     try
     {
-        await publisher.PublishAsync(topic.ServiceBusTopicName, body, topic.TenantId, topic.Key, request.ContentType, ct);
+        await publisher.PublishAsync(topic.UseManagedIdentity, topic.FullyQualifiedNamespace, topic.ServiceBusConnectionString,
+            topic.ServiceBusTopicName, body, topic.TenantId, topic.Key, request.ContentType, ct);
     }
     catch (Exception exception)
     {
@@ -195,18 +200,25 @@ static IResult? ValidateTenant(TenantRequest request)
     return null;
 }
 
-static IResult? ValidateTopic(TopicRequest request)
+static IResult? ValidateTopic(TopicRequest request, bool isCreate, bool hasStoredConnection)
 {
     if (!ValidKey(request.Key)) return Results.BadRequest(new { error = "Topic key must be 1-100 letters, numbers, or hyphens." });
     if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 200) return Results.BadRequest(new { error = "Topic name is required and must be at most 200 characters." });
+    if (string.IsNullOrWhiteSpace(request.ServiceBusTopicName) || request.ServiceBusTopicName.Trim().Length > 260) return Results.BadRequest(new { error = "Azure Service Bus topic name is required and must be at most 260 characters." });
+    if (request.UseManagedIdentity && string.IsNullOrWhiteSpace(request.FullyQualifiedNamespace)) return Results.BadRequest(new { error = "Fully qualified namespace is required for managed identity." });
+    if (request.UseManagedIdentity && request.FullyQualifiedNamespace!.Trim().Length > 300) return Results.BadRequest(new { error = "Fully qualified namespace must be at most 300 characters." });
+    if (!request.UseManagedIdentity && string.IsNullOrWhiteSpace(request.ServiceBusConnectionString) && (isCreate || !hasStoredConnection)) return Results.BadRequest(new { error = "Connection string is required when managed identity is disabled." });
+    if (!string.IsNullOrWhiteSpace(request.ServiceBusConnectionString) && request.ServiceBusConnectionString.Trim().Length > 2000) return Results.BadRequest(new { error = "Connection string must be at most 2000 characters." });
     return null;
 }
 
 static bool ValidKey(string? key) => !string.IsNullOrWhiteSpace(key) && key.Trim().Length <= 100 && Regex.IsMatch(key.Trim(), "^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.IgnoreCase);
 static string NormalizeKey(string value) => value.Trim().ToLowerInvariant();
-static string BuildServiceBusTopicName(Guid tenantId, string topicKey) => $"{tenantId:D}-{topicKey}";
+static string NormalizeNamespace(string value) => value.Trim().Replace("https://", "", StringComparison.OrdinalIgnoreCase).TrimEnd('/');
 static TenantResponse ToResponse(Tenant tenant, int count) => new(tenant.Id, tenant.Name, tenant.IsEnabled, tenant.CreatedAt, tenant.UpdatedAt, count);
-static TopicResponse ToTopicResponse(Topic topic) => new(topic.Id, topic.TenantId, topic.Key, topic.Name, topic.IsEnabled, topic.IsSharePointWebhook, topic.ServiceBusTopicName, topic.CreatedAt, topic.UpdatedAt);
+static TopicResponse ToTopicResponse(Topic topic) => new(topic.Id, topic.TenantId, topic.Key, topic.Name, topic.IsEnabled,
+    topic.IsSharePointWebhook, topic.UseManagedIdentity, topic.FullyQualifiedNamespace, !string.IsNullOrWhiteSpace(topic.ServiceBusConnectionString),
+    topic.ServiceBusTopicName, topic.CreatedAt, topic.UpdatedAt);
 
 public sealed record ReceivedRequest(Guid Id, string TenantId, string TopicName, DateTimeOffset ReceivedAt, string Payload);
 public sealed class WebhookHub : Hub;

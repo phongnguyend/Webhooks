@@ -7,7 +7,10 @@ import {
 
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5229').replace(/\/$/, '')
 const emptyTenant = { name: '', isEnabled: true }
-const emptyTopic = { key: '', name: '', isEnabled: true, isSharePointWebhook: false }
+const emptyTopic = {
+  key: '', name: '', isEnabled: true, isSharePointWebhook: false,
+  useManagedIdentity: true, fullyQualifiedNamespace: '', serviceBusConnectionString: '', serviceBusTopicName: '',
+}
 
 async function api(path, options) {
   const response = await fetch(`${API_URL}${path}`, {
@@ -230,12 +233,12 @@ export default function App() {
                   <button className="icon-button danger" onClick={() => deleteTenant(selectedTenant)} title="Delete tenant"><Trash2 size={17} /></button>
                 </div>
               </div>
-              <div className="content-heading"><div><h3>Topic routes</h3><p>Each route publishes to a topic on the shared Azure Service Bus.</p></div><button className="primary-button" onClick={() => setDialog({ type: 'topic', item: null })}><Plus size={16} /> Add topic</button></div>
+              <div className="content-heading"><div><h3>Topic routes</h3><p>Each route publishes to its configured Azure Service Bus destination.</p></div><button className="primary-button" onClick={() => setDialog({ type: 'topic', item: null })}><Plus size={16} /> Add topic</button></div>
               <div className="topic-grid">
                 {topics.map((topic) => <article className={`topic-card ${!topic.isEnabled ? 'disabled' : ''}`} key={topic.id}>
                   <div className="topic-card-top"><span className="topic-icon"><Database size={18} /></span><Status enabled={topic.isEnabled} /></div>
                   <h4>{topic.name}</h4><p className="topic-key">/{topic.key}{topic.isSharePointWebhook && <span className="sharepoint-label">SharePoint webhook</span>}</p>
-                  <div className="destination"><span>Azure topic · generated</span><strong>{topic.serviceBusTopicName}</strong></div>
+                  <div className="destination"><span>Azure Service Bus topic</span><strong>{topic.serviceBusTopicName}</strong><small>{topic.useManagedIdentity ? topic.fullyQualifiedNamespace : 'Connection string credentials'}</small></div>
                   <div className="endpoint"><code>{API_URL}/tenants/{selectedTenant.id}/topics/{topic.key}</code><button onClick={() => copy(`${API_URL}/tenants/${selectedTenant.id}/topics/${topic.key}`)} title="Copy endpoint"><Copy size={14} /></button></div>
                   <div className="card-actions"><button onClick={() => toggleTopic(topic)}>{topic.isEnabled ? 'Disable' : 'Enable'}</button><span /><button onClick={() => setDialog({ type: 'test', item: topic })}><Send size={15} /> Test</button><button onClick={() => setDialog({ type: 'topic', item: topic })}><Edit3 size={15} /> Edit</button><button className="danger-text" onClick={() => deleteTopic(topic)}><Trash2 size={15} /></button></div>
                 </article>)}
@@ -249,7 +252,7 @@ export default function App() {
       )}
 
       {dialog?.type === 'tenant' && <TenantDialog item={dialog.item} onClose={() => setDialog(null)} onSave={saveTenant} />}
-      {dialog?.type === 'topic' && <TopicDialog tenantId={selectedTenantId} item={dialog.item} onClose={() => setDialog(null)} onSave={saveTopic} />}
+      {dialog?.type === 'topic' && <TopicDialog item={dialog.item} onClose={() => setDialog(null)} onSave={saveTopic} />}
       {dialog?.type === 'test' && <TestPayloadDialog tenantId={selectedTenantId} topic={dialog.item} onClose={() => setDialog(null)} onSend={sendTestPayload} />}
     </main>
   )
@@ -266,23 +269,32 @@ function TenantDialog({ item, onClose, onSave }) {
   </Dialog>
 }
 
-function TopicDialog({ tenantId, item, onClose, onSave }) {
-  const [form, setForm] = useState(item ? { key: item.key, name: item.name, isEnabled: item.isEnabled, isSharePointWebhook: item.isSharePointWebhook } : emptyTopic)
+function TopicDialog({ item, onClose, onSave }) {
+  const [form, setForm] = useState(item ? {
+    key: item.key, name: item.name, isEnabled: item.isEnabled, isSharePointWebhook: item.isSharePointWebhook,
+    useManagedIdentity: item.useManagedIdentity, fullyQualifiedNamespace: item.fullyQualifiedNamespace || '',
+    serviceBusConnectionString: '', serviceBusTopicName: item.serviceBusTopicName,
+  } : emptyTopic)
   const [topicCopied, setTopicCopied] = useState(false)
-  const generatedTopicName = `${tenantId}-${form.key || 'topic-key'}`
 
-  async function copyGeneratedTopic() {
-    await navigator.clipboard.writeText(generatedTopicName)
+  async function copyServiceBusTopic() {
+    if (!form.serviceBusTopicName) return
+    await navigator.clipboard.writeText(form.serviceBusTopicName)
     setTopicCopied(true)
     window.setTimeout(() => setTopicCopied(false), 1600)
   }
 
   return <Dialog title={item ? 'Edit topic route' : 'Add topic route'} onClose={onClose} onSubmit={() => onSave(form)}>
     <div className="field-row"><Field label="Display name"><input required maxLength="200" autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Order events" /></Field><Field label="Route key"><input required maxLength="100" pattern="[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*" value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value.toLowerCase() })} placeholder="orders" /></Field></div>
-    <Field label="Azure Service Bus topic" hint="Generated automatically from the tenant ID and topic key. The destination topic must already exist on the shared namespace.">
-      <div className="generated-value">
-        <span title={generatedTopicName}>{generatedTopicName}</span>
-        <button type="button" onClick={copyGeneratedTopic} title="Copy Azure Service Bus topic" aria-label="Copy Azure Service Bus topic">
+    <fieldset className="auth-fieldset"><legend>Authentication</legend><div className="auth-options">
+      <button type="button" className={form.useManagedIdentity ? 'active' : ''} onClick={() => setForm({ ...form, useManagedIdentity: true, serviceBusConnectionString: '' })}><strong>Managed Identity</strong><small>Use this application's Azure identity</small></button>
+      <button type="button" className={!form.useManagedIdentity ? 'active' : ''} onClick={() => setForm({ ...form, useManagedIdentity: false, fullyQualifiedNamespace: '' })}><strong>Connection String</strong><small>Use a namespace access key</small></button>
+    </div></fieldset>
+    {form.useManagedIdentity ? <Field label="Fully qualified namespace" hint="Example: my-namespace.servicebus.windows.net"><input required maxLength="300" value={form.fullyQualifiedNamespace} onChange={(e) => setForm({ ...form, fullyQualifiedNamespace: e.target.value })} placeholder="my-namespace.servicebus.windows.net" /></Field> : <Field label="Connection string" hint={item?.hasServiceBusConnection ? 'Leave blank to keep the stored connection string.' : 'The secret is stored but never returned by the API.'}><input type="password" required={!item?.hasServiceBusConnection} maxLength="2000" value={form.serviceBusConnectionString} onChange={(e) => setForm({ ...form, serviceBusConnectionString: e.target.value })} placeholder={item?.hasServiceBusConnection ? 'Connection string stored — enter to replace' : 'Endpoint=sb://…'} autoComplete="new-password" /></Field>}
+    <Field label="Azure Service Bus topic" hint="The topic must already exist in the selected namespace.">
+      <div className="topic-input-with-copy">
+        <input required maxLength="260" value={form.serviceBusTopicName} onChange={(e) => setForm({ ...form, serviceBusTopicName: e.target.value })} placeholder="order-created" />
+        <button type="button" onClick={copyServiceBusTopic} disabled={!form.serviceBusTopicName} title="Copy Azure Service Bus topic" aria-label="Copy Azure Service Bus topic">
           {topicCopied ? <Check size={15} /> : <Copy size={15} />}
         </button>
       </div>

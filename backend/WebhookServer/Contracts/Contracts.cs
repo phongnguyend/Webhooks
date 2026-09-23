@@ -14,7 +14,11 @@ public sealed record TopicRequest(
     string Key,
     string Name,
     bool IsEnabled,
-    bool IsSharePointWebhook);
+    bool IsSharePointWebhook,
+    bool UseManagedIdentity,
+    string? FullyQualifiedNamespace,
+    string? ServiceBusConnectionString,
+    string ServiceBusTopicName);
 
 public sealed record TopicResponse(
     Guid Id,
@@ -23,6 +27,9 @@ public sealed record TopicResponse(
     string Name,
     bool IsEnabled,
     bool IsSharePointWebhook,
+    bool UseManagedIdentity,
+    string? FullyQualifiedNamespace,
+    bool HasServiceBusConnection,
     string ServiceBusTopicName,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);

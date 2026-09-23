@@ -29,7 +29,11 @@ Content-Type: application/json
   "key": "orders",
   "name": "Order events",
   "isEnabled": true,
-  "isSharePointWebhook": false
+  "isSharePointWebhook": false,
+  "useManagedIdentity": true,
+  "fullyQualifiedNamespace": "my-namespace.servicebus.windows.net",
+  "serviceBusConnectionString": null,
+  "serviceBusTopicName": "incoming-orders"
 }
 
 ###
