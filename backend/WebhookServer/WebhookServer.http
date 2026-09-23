@@ -1,35 +1,52 @@
 @WebhookServer_HostAddress = http://localhost:5229
+@tenantId = replace-after-creation
+@topicId = replace-after-creation
 
-### Get all received requests
-GET {{WebhookServer_HostAddress}}/
+GET {{WebhookServer_HostAddress}}/healthz
 Accept: application/json
 
 ###
 
-### Reset all received requests
-GET {{WebhookServer_HostAddress}}/reset
+GET {{WebhookServer_HostAddress}}/api/tenants
+Accept: application/json
 
 ###
 
-### Post to a topic
-POST {{WebhookServer_HostAddress}}/tenants/tenant-1/topics/orders
+POST {{WebhookServer_HostAddress}}/api/tenants
 Content-Type: application/json
 
 {
-  "orderId": "12345",
-  "status": "created"
+  "name": "Demo tenant",
+  "isEnabled": true
 }
 
 ###
 
-### Get requests for a topic
-GET {{WebhookServer_HostAddress}}/tenants/tenant-1/topics/orders
-Accept: application/json
+POST {{WebhookServer_HostAddress}}/api/tenants/{{tenantId}}/topics
+Content-Type: application/json
+
+{
+  "key": "orders",
+  "name": "Order events",
+  "isEnabled": true,
+  "isSharePointWebhook": false
+}
 
 ###
 
-### Delete requests for a topic
-DELETE {{WebhookServer_HostAddress}}/tenants/tenant-1/topics/orders
+POST {{WebhookServer_HostAddress}}/tenants/{{tenantId}}/topics/orders
+Content-Type: application/json
 
-### Health check
-GET {{WebhookServer_HostAddress}}/healthz
+{
+  "orderId": "ORD-1042",
+  "status": "paid"
+}
+
+###
+
+PATCH {{WebhookServer_HostAddress}}/api/tenants/{{tenantId}}/topics/{{topicId}}/enabled
+Content-Type: application/json
+
+{
+  "isEnabled": false
+}
