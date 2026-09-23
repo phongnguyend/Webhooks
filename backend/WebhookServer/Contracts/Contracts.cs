@@ -1,5 +1,7 @@
 namespace WebhookServer.Contracts;
 
+public sealed record UserProfileRequest(string? FirstName, string? LastName, string? PhoneNumber);
+
 public sealed record TenantRequest(string Name, bool IsEnabled = true);
 
 public sealed record TenantResponse(

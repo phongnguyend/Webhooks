@@ -18,6 +18,8 @@ public sealed class WebhookDbContext(DbContextOptions<WebhookDbContext> options)
         {
             entity.ToTable("Users");
             entity.Property(x => x.Id).HasDefaultValueSql("NEWSEQUENTIALID()");
+            entity.Property(x => x.FirstName).HasMaxLength(100);
+            entity.Property(x => x.LastName).HasMaxLength(100);
         });
         modelBuilder.Entity<IdentityRole<Guid>>().ToTable("Roles");
         modelBuilder.Entity<IdentityUserClaim<Guid>>().ToTable("UserClaims");

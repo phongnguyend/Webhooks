@@ -208,6 +208,15 @@ export default function App() {
     } catch (error) { showError(error) }
   }
 
+  async function saveProfile(values) {
+    try {
+      const updated = await api('/api/auth/me', { method: 'PUT', body: JSON.stringify(values) })
+      setUser(updated)
+      setDialog(null)
+      showSuccess('Profile updated.')
+    } catch (error) { showError(error); throw error }
+  }
+
   async function toggleTenant(tenant) {
     try {
       await api(`/api/tenants/${tenant.id}/enabled`, { method: 'PATCH', body: JSON.stringify({ isEnabled: !tenant.isEnabled }) })
@@ -261,6 +270,7 @@ export default function App() {
   }, [indexedEvents, query])
   const selectedEvent = indexedEvents.find((event) => event._id === selectedEventId) || indexedEvents[0]
   const formattedPayload = selectedEvent ? JSON.stringify(parsePayload(selectedEvent.payload), null, 2) : ''
+  const userDisplayName = user ? [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username || user.email : ''
 
   async function copy(value = formattedPayload) {
     if (!value) return
@@ -315,7 +325,7 @@ export default function App() {
           <button className={view === 'manage' ? 'active' : ''} onClick={() => setView('manage')}><Settings2 size={16} /> Configuration</button>
           <button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}><Eye size={16} /> Events <span>{events.length}</span></button>
         </nav>
-        <div className="account-area"><div className={`connection-pill ${connectionStatus}`}><span className="pulse-dot" />{connectionStatus === 'connected' ? 'Live' : connectionStatus}</div><div className="user-menu"><span title={user.email}>{user.email.slice(0, 1).toUpperCase()}</span><small>{user.email}</small><button onClick={logout}>Sign out</button></div></div>
+        <div className="account-area"><div className={`connection-pill ${connectionStatus}`}><span className="pulse-dot" />{connectionStatus === 'connected' ? 'Live' : connectionStatus}</div><div className="user-menu"><button className="profile-trigger" onClick={() => setDialog({ type: 'profile' })} title={user.email}><span>{userDisplayName.slice(0, 1).toUpperCase()}</span><small>{userDisplayName}</small></button><button className="signout-button" onClick={logout}>Sign out</button></div></div>
       </header>
 
       {notice && <div className={`toast ${notice.kind}`}><span>{notice.text}</span><button onClick={() => setNotice(null)} aria-label="Dismiss"><X size={15} /></button></div>}
@@ -369,12 +379,54 @@ export default function App() {
       {dialog?.type === 'tenant' && <TenantDialog item={dialog.item} onClose={() => setDialog(null)} onSave={saveTenant} />}
       {dialog?.type === 'topic' && <TopicDialog item={dialog.item} onClose={() => setDialog(null)} onSave={saveTopic} />}
       {dialog?.type === 'test' && <TestPayloadDialog tenantId={selectedTenantId} topic={dialog.item} onClose={() => setDialog(null)} onSend={sendTestPayload} />}
+      {dialog?.type === 'profile' && <ProfileDialog user={user} onClose={() => setDialog(null)} onSave={saveProfile} onSignOut={logout} />}
     </main>
   )
 }
 
 function GoogleLogo() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.8 3-4.3 3-7.4Z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1a5.8 5.8 0 0 1-5.5-4H3.2v2.6A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.5 14a6 6 0 0 1 0-4V7.4H3.2a10 10 0 0 0 0 9.2L6.5 14Z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.8.5 3.8 1.5l2.9-2.8A9.7 9.7 0 0 0 3.2 7.4L6.5 10A5.8 5.8 0 0 1 12 5.9Z"/></svg>
+}
+
+function ProfileDialog({ user, onClose, onSave, onSignOut }) {
+  const [copiedField, setCopiedField] = useState('')
+  const [form, setForm] = useState({ firstName: user.firstName || '', lastName: user.lastName || '', phoneNumber: user.phoneNumber || '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function copyProfileField(field, value) {
+    if (!value) return
+    await navigator.clipboard.writeText(value)
+    setCopiedField(field)
+    window.setTimeout(() => setCopiedField(''), 1600)
+  }
+
+  async function submit(event) {
+    event.preventDefault()
+    setError('')
+    setSaving(true)
+    try { await onSave(form) }
+    catch (saveError) { setError(saveError.message || 'Unable to update profile.'); setSaving(false) }
+  }
+
+  const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.username
+
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <form className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title" onSubmit={submit}>
+      <div className="modal-header"><h2 id="profile-title">Your profile</h2><button type="button" onClick={onClose} aria-label="Close"><X size={19} /></button></div>
+      <div className="modal-body">
+        <div className="profile-summary"><span>{(user.firstName || user.email).slice(0, 1).toUpperCase()}</span><div><strong>{displayName}</strong><small>Signed in with Google</small></div></div>
+        <div className="field-row"><Field label="First name"><input autoFocus maxLength="100" value={form.firstName} onChange={(event) => setForm({ ...form, firstName: event.target.value })} placeholder="First name" /></Field><Field label="Last name"><input maxLength="100" value={form.lastName} onChange={(event) => setForm({ ...form, lastName: event.target.value })} placeholder="Last name" /></Field></div>
+        <Field label="Email" hint="Managed by your Google account."><div className="topic-input-with-copy"><input readOnly value={user.email} /><button type="button" onClick={() => copyProfileField('email', user.email)} title="Copy email" aria-label="Copy email">{copiedField === 'email' ? <Check size={15} /> : <Copy size={15} />}</button></div></Field>
+        <Field label="Phone number" hint="Changing the number resets its verification status."><div className="topic-input-with-copy"><input type="tel" maxLength="50" value={form.phoneNumber} onChange={(event) => setForm({ ...form, phoneNumber: event.target.value })} placeholder="+1 555 010 2000" /><button type="button" onClick={() => copyProfileField('phone', form.phoneNumber)} disabled={!form.phoneNumber} title="Copy phone number" aria-label="Copy phone number">{copiedField === 'phone' ? <Check size={15} /> : <Copy size={15} />}</button></div></Field>
+        <Field label="Application user ID" hint="Database-generated ID used for tenant ownership.">
+          <div className="topic-input-with-copy"><input readOnly value={user.id} /><button type="button" onClick={() => copyProfileField('id', user.id)} title="Copy user ID" aria-label="Copy user ID">{copiedField === 'id' ? <Check size={15} /> : <Copy size={15} />}</button></div>
+        </Field>
+        {error && <p className="form-error" role="alert">{error}</p>}
+      </div>
+      <div className="modal-footer profile-footer"><button type="button" className="danger-profile-button" onClick={onSignOut}>Sign out</button><div><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button></div></div>
+    </form>
+  </div>
 }
 
 function Status({ enabled }) { return <span className={`status-badge ${enabled ? 'enabled' : ''}`}>{enabled ? 'Enabled' : 'Disabled'}</span> }

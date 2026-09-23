@@ -59,7 +59,14 @@ builder.Services.AddAuthentication(options =>
                 var user = await userManager.FindByLoginAsync("Google", subject) ?? await userManager.FindByEmailAsync(email);
                 if (user is null)
                 {
-                    user = new AppUser { UserName = email, Email = email, EmailConfirmed = true };
+                    user = new AppUser
+                    {
+                        UserName = email,
+                        Email = email,
+                        EmailConfirmed = true,
+                        FirstName = NormalizeProfileName(context.Principal?.FindFirstValue("given_name")),
+                        LastName = NormalizeProfileName(context.Principal?.FindFirstValue("family_name"))
+                    };
                     var createResult = await userManager.CreateAsync(user);
                     if (!createResult.Succeeded) { context.Fail("Unable to create the application user."); return; }
                 }
@@ -112,8 +119,33 @@ app.MapGet("/api/auth/me", async (ClaimsPrincipal principal, UserManager<AppUser
     var user = await userManager.GetUserAsync(principal);
     return user is null
         ? Results.Unauthorized()
-        : Results.Ok(new { id = user.Id, username = user.UserName, email = user.Email });
-});
+        : Results.Ok(ToUserResponse(user));
+}).RequireAuthorization();
+
+app.MapPut("/api/auth/me", async (UserProfileRequest request, ClaimsPrincipal principal, UserManager<AppUser> userManager) =>
+{
+    var firstName = NormalizeProfileName(request.FirstName);
+    var lastName = NormalizeProfileName(request.LastName);
+    var phoneNumber = NormalizeProfileName(request.PhoneNumber);
+    if (firstName?.Length > 100 || lastName?.Length > 100)
+        return Results.BadRequest(new { error = "First name and last name must each be at most 100 characters." });
+    if (phoneNumber?.Length > 50)
+        return Results.BadRequest(new { error = "Phone number must be at most 50 characters." });
+
+    var user = await userManager.GetUserAsync(principal);
+    if (user is null) return Results.Unauthorized();
+    user.FirstName = firstName;
+    user.LastName = lastName;
+    if (!string.Equals(user.PhoneNumber, phoneNumber, StringComparison.Ordinal))
+    {
+        user.PhoneNumber = phoneNumber;
+        user.PhoneNumberConfirmed = false;
+    }
+    var result = await userManager.UpdateAsync(user);
+    return result.Succeeded
+        ? Results.Ok(ToUserResponse(user))
+        : Results.BadRequest(new { error = string.Join(" ", result.Errors.Select(x => x.Description)) });
+}).RequireAuthorization();
 
 var tenants = app.MapGroup("/api/tenants").RequireAuthorization();
 
@@ -308,7 +340,9 @@ static IResult? ValidateTopic(TopicRequest request, bool isCreate, bool hasStore
 static bool ValidKey(string? key) => !string.IsNullOrWhiteSpace(key) && key.Trim().Length <= 100 && Regex.IsMatch(key.Trim(), "^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.IgnoreCase);
 static string NormalizeKey(string value) => value.Trim().ToLowerInvariant();
 static string NormalizeNamespace(string value) => value.Trim().Replace("https://", "", StringComparison.OrdinalIgnoreCase).TrimEnd('/');
+static string? NormalizeProfileName(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 static Guid GetUserId(ClaimsPrincipal user) => Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
+static object ToUserResponse(AppUser user) => new { id = user.Id, username = user.UserName, email = user.Email, firstName = user.FirstName, lastName = user.LastName, phoneNumber = user.PhoneNumber };
 static TenantResponse ToResponse(Tenant tenant, int count) => new(tenant.Id, tenant.Name, tenant.IsEnabled, tenant.CreatedAt, tenant.UpdatedAt, count);
 static TopicResponse ToTopicResponse(Topic topic) => new(topic.Id, topic.TenantId, topic.Key, topic.Name, topic.IsEnabled,
     topic.IsSharePointWebhook, topic.UseManagedIdentity, topic.FullyQualifiedNamespace, !string.IsNullOrWhiteSpace(topic.ServiceBusConnectionString),
