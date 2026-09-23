@@ -195,7 +195,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand"><span className="brand-mark"><Webhook size={21} /></span><div><h1>Webhook Hub</h1><p>Tenant routing console</p></div></div>
+        <div className="brand"><span className="brand-mark"><Webhook size={21} /></span><div><h1>Webhook Router</h1><p>Tenant routing console</p></div></div>
         <nav className="tabs" aria-label="Primary navigation">
           <button className={view === 'manage' ? 'active' : ''} onClick={() => setView('manage')}><Settings2 size={16} /> Configuration</button>
           <button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}><Eye size={16} /> Events <span>{events.length}</span></button>
@@ -305,7 +305,7 @@ function TopicDialog({ item, onClose, onSave }) {
 }
 
 function TestPayloadDialog({ tenantId, topic, onClose, onSend }) {
-  const [payload, setPayload] = useState('{\n  "message": "Hello from Webhook Hub"\n}')
+  const [payload, setPayload] = useState('{\n  "message": "Hello from Webhook Router"\n}')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
 

@@ -1,4 +1,4 @@
-# Webhook Hub
+# Webhook Router
 
 An ASP.NET Core and React application for managing tenant-specific webhook routes. Each route can publish to any Azure Service Bus namespace and topic, and successful messages are shown in a live SignalR event inspector.
 

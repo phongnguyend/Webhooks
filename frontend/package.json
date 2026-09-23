@@ -1,5 +1,5 @@
 {
-  "name": "webhook-event-console",
+  "name": "webhook-router",
   "private": true,
   "version": "0.1.0",
   "type": "module",
