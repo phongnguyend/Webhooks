@@ -1,5 +1,9 @@
 using System.Collections.Concurrent;
+using System.Security.Claims;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using WebhookServer.Contracts;
@@ -12,14 +16,73 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
     ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is required.");
 
 builder.Services.AddDbContext<WebhookDbContext>(options => options.UseSqlServer(connectionString));
+builder.Services.AddIdentity<AppUser, IdentityRole<Guid>>(options =>
+    {
+        options.User.RequireUniqueEmail = true;
+        options.SignIn.RequireConfirmedEmail = true;
+    })
+    .AddEntityFrameworkStores<WebhookDbContext>()
+    .AddDefaultTokenProviders();
+var googleClientId = builder.Configuration["Authentication:Google:ClientId"] ?? string.Empty;
+builder.Services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(options =>
+    {
+        options.Authority = "https://accounts.google.com";
+        options.Audience = googleClientId;
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters.NameClaimType = "email";
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var token = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(token) && context.HttpContext.Request.Path.StartsWithSegments("/hubs/events"))
+                    context.Token = token;
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = async context =>
+            {
+                var subject = context.Principal?.FindFirstValue("sub");
+                var email = context.Principal?.FindFirstValue("email")?.Trim().ToLowerInvariant();
+                var emailVerified = context.Principal?.FindFirstValue("email_verified");
+                if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(email) || !string.Equals(emailVerified, "true", StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Fail("A verified Google email is required.");
+                    return;
+                }
+
+                var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<AppUser>>();
+                var user = await userManager.FindByLoginAsync("Google", subject) ?? await userManager.FindByEmailAsync(email);
+                if (user is null)
+                {
+                    user = new AppUser { UserName = email, Email = email, EmailConfirmed = true };
+                    var createResult = await userManager.CreateAsync(user);
+                    if (!createResult.Succeeded) { context.Fail("Unable to create the application user."); return; }
+                }
+
+                if ((await userManager.GetLoginsAsync(user)).All(x => x.LoginProvider != "Google" || x.ProviderKey != subject))
+                {
+                    var loginResult = await userManager.AddLoginAsync(user, new UserLoginInfo("Google", subject, "Google"));
+                    if (!loginResult.Succeeded) { context.Fail("Unable to link the Google account."); return; }
+                }
+
+                if (context.Principal?.Identity is ClaimsIdentity identity)
+                    identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()));
+            }
+        };
+    });
+builder.Services.AddAuthorization();
 builder.Services.AddSingleton<ServiceBusPublisher>();
 builder.Services.AddSingleton<ConcurrentQueue<ReceivedRequest>>();
 builder.Services.AddSignalR();
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5173"])
     .AllowAnyHeader()
-    .AllowAnyMethod()
-    .AllowCredentials()));
+    .AllowAnyMethod()));
 
 var app = builder.Build();
 
@@ -29,32 +92,55 @@ await using (var scope = app.Services.CreateAsyncScope())
 }
 
 app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapGet("/healthz", () => Results.Ok(new { status = "Healthy" }));
-app.MapGet("/", (ConcurrentQueue<ReceivedRequest> requests) => requests.Reverse().Take(500));
-app.MapPost("/reset", (ConcurrentQueue<ReceivedRequest> requests) => { requests.Clear(); return Results.NoContent(); });
+app.MapGet("/", (ClaimsPrincipal user, ConcurrentQueue<ReceivedRequest> requests) =>
+    requests.Where(x => x.CreatedByUserId == GetUserId(user)).Reverse().Take(500)).RequireAuthorization();
+app.MapPost("/reset", (ClaimsPrincipal user, ConcurrentQueue<ReceivedRequest> requests) =>
+{
+    var userId = GetUserId(user);
+    var retained = requests.Where(x => x.CreatedByUserId != userId).ToArray();
+    requests.Clear();
+    foreach (var item in retained) requests.Enqueue(item);
+    return Results.NoContent();
+}).RequireAuthorization();
 
-var tenants = app.MapGroup("/api/tenants");
+app.MapGet("/api/auth/me", async (ClaimsPrincipal principal, UserManager<AppUser> userManager) =>
+{
+    if (principal.Identity?.IsAuthenticated != true) return Results.Unauthorized();
+    var user = await userManager.GetUserAsync(principal);
+    return user is null
+        ? Results.Unauthorized()
+        : Results.Ok(new { id = user.Id, username = user.UserName, email = user.Email });
+});
 
-tenants.MapGet("/", async (WebhookDbContext db, CancellationToken ct) =>
-    await db.Tenants.AsNoTracking().OrderBy(x => x.Name)
+var tenants = app.MapGroup("/api/tenants").RequireAuthorization();
+
+tenants.MapGet("/", async (ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
+{
+    var userId = GetUserId(user);
+    return await db.Tenants.AsNoTracking().Where(x => x.CreatedByUserId == userId).OrderBy(x => x.Name)
         .Select(x => new TenantResponse(x.Id, x.Name, x.IsEnabled, x.CreatedAt, x.UpdatedAt, x.Topics.Count))
-        .ToListAsync(ct));
+        .ToListAsync(ct);
+});
 
-tenants.MapPost("/", async (TenantRequest request, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapPost("/", async (TenantRequest request, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
     var error = ValidateTenant(request);
     if (error is not null) return error;
-    var tenant = new Tenant { Name = request.Name.Trim(), IsEnabled = request.IsEnabled };
+    var tenant = new Tenant { CreatedByUserId = GetUserId(user), Name = request.Name.Trim(), IsEnabled = request.IsEnabled };
     db.Tenants.Add(tenant);
     await db.SaveChangesAsync(ct);
     return Results.Created($"/api/tenants/{tenant.Id}", ToResponse(tenant, 0));
 });
 
-tenants.MapPut("/{tenantId:guid}", async (Guid tenantId, TenantRequest request, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapPut("/{tenantId:guid}", async (Guid tenantId, TenantRequest request, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
     var error = ValidateTenant(request);
     if (error is not null) return error;
-    var tenant = await db.Tenants.FindAsync([tenantId], ct);
+    var userId = GetUserId(user);
+    var tenant = await db.Tenants.SingleOrDefaultAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct);
     if (tenant is null) return Results.NotFound();
     tenant.Name = request.Name.Trim();
     tenant.IsEnabled = request.IsEnabled;
@@ -63,9 +149,10 @@ tenants.MapPut("/{tenantId:guid}", async (Guid tenantId, TenantRequest request, 
     return Results.Ok(ToResponse(tenant, await db.Topics.CountAsync(x => x.TenantId == tenantId, ct)));
 });
 
-tenants.MapPatch("/{tenantId:guid}/enabled", async (Guid tenantId, EnabledRequest request, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapPatch("/{tenantId:guid}/enabled", async (Guid tenantId, EnabledRequest request, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
-    var tenant = await db.Tenants.FindAsync([tenantId], ct);
+    var userId = GetUserId(user);
+    var tenant = await db.Tenants.SingleOrDefaultAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct);
     if (tenant is null) return Results.NotFound();
     tenant.IsEnabled = request.IsEnabled;
     tenant.UpdatedAt = DateTimeOffset.UtcNow;
@@ -73,27 +160,30 @@ tenants.MapPatch("/{tenantId:guid}/enabled", async (Guid tenantId, EnabledReques
     return Results.NoContent();
 });
 
-tenants.MapDelete("/{tenantId:guid}", async (Guid tenantId, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapDelete("/{tenantId:guid}", async (Guid tenantId, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
-    var tenant = await db.Tenants.FindAsync([tenantId], ct);
+    var userId = GetUserId(user);
+    var tenant = await db.Tenants.SingleOrDefaultAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct);
     if (tenant is null) return Results.NotFound();
     db.Tenants.Remove(tenant);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
 });
 
-tenants.MapGet("/{tenantId:guid}/topics", async (Guid tenantId, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapGet("/{tenantId:guid}/topics", async (Guid tenantId, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
-    if (!await db.Tenants.AnyAsync(x => x.Id == tenantId, ct)) return Results.NotFound();
+    var userId = GetUserId(user);
+    if (!await db.Tenants.AnyAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct)) return Results.NotFound();
     var topics = await db.Topics.AsNoTracking().Where(x => x.TenantId == tenantId).OrderBy(x => x.Name).ToListAsync(ct);
     return Results.Ok(topics.Select(ToTopicResponse));
 });
 
-tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest request, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest request, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
     var error = ValidateTopic(request, isCreate: true, hasStoredConnection: false);
     if (error is not null) return error;
-    if (!await db.Tenants.AnyAsync(x => x.Id == tenantId, ct)) return Results.NotFound();
+    var userId = GetUserId(user);
+    if (!await db.Tenants.AnyAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct)) return Results.NotFound();
     var key = NormalizeKey(request.Key);
     if (await db.Topics.AnyAsync(x => x.TenantId == tenantId && x.Key == key, ct))
         return Results.Conflict(new { error = "A topic with this key already exists in the tenant." });
@@ -112,9 +202,10 @@ tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest re
     return Results.Created($"/api/tenants/{tenantId}/topics/{topic.Id}", ToTopicResponse(topic));
 });
 
-tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, Guid topicId, TopicRequest request, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, Guid topicId, TopicRequest request, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
-    var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId, ct);
+    var userId = GetUserId(user);
+    var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId && x.Tenant.CreatedByUserId == userId, ct);
     if (topic is null) return Results.NotFound();
     var error = ValidateTopic(request, isCreate: false, hasStoredConnection: !string.IsNullOrWhiteSpace(topic.ServiceBusConnectionString));
     if (error is not null) return error;
@@ -136,9 +227,10 @@ tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, G
     return Results.Ok(ToTopicResponse(topic));
 });
 
-tenants.MapPatch("/{tenantId:guid}/topics/{topicId:guid}/enabled", async (Guid tenantId, Guid topicId, EnabledRequest request, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapPatch("/{tenantId:guid}/topics/{topicId:guid}/enabled", async (Guid tenantId, Guid topicId, EnabledRequest request, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
-    var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId, ct);
+    var userId = GetUserId(user);
+    var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId && x.Tenant.CreatedByUserId == userId, ct);
     if (topic is null) return Results.NotFound();
     topic.IsEnabled = request.IsEnabled;
     topic.UpdatedAt = DateTimeOffset.UtcNow;
@@ -146,9 +238,10 @@ tenants.MapPatch("/{tenantId:guid}/topics/{topicId:guid}/enabled", async (Guid t
     return Results.NoContent();
 });
 
-tenants.MapDelete("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, Guid topicId, WebhookDbContext db, CancellationToken ct) =>
+tenants.MapDelete("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, Guid topicId, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
-    var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId, ct);
+    var userId = GetUserId(user);
+    var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId && x.Tenant.CreatedByUserId == userId, ct);
     if (topic is null) return Results.NotFound();
     db.Topics.Remove(topic);
     await db.SaveChangesAsync(ct);
@@ -184,14 +277,14 @@ app.MapPost("/tenants/{tenantId:guid}/topics/{topicKey}", async (
         return Results.Problem("Azure Service Bus rejected or could not receive the message.", statusCode: StatusCodes.Status502BadGateway);
     }
 
-    var received = new ReceivedRequest(Guid.NewGuid(), topic.TenantId.ToString(), topic.Key, DateTimeOffset.UtcNow, body);
+    var received = new ReceivedRequest(Guid.NewGuid(), topic.TenantId.ToString(), topic.Key, DateTimeOffset.UtcNow, body, topic.Tenant.CreatedByUserId);
     requests.Enqueue(received);
     while (requests.Count > 500) requests.TryDequeue(out _);
-    await hub.Clients.All.SendAsync("WebhookReceived", received, ct);
+    await hub.Clients.User(topic.Tenant.CreatedByUserId.ToString()).SendAsync("WebhookReceived", received, ct);
     return Results.Accepted(value: received);
 });
 
-app.MapHub<WebhookHub>("/hubs/events");
+app.MapHub<WebhookHub>("/hubs/events").RequireAuthorization();
 app.Run();
 
 static IResult? ValidateTenant(TenantRequest request)
@@ -215,11 +308,18 @@ static IResult? ValidateTopic(TopicRequest request, bool isCreate, bool hasStore
 static bool ValidKey(string? key) => !string.IsNullOrWhiteSpace(key) && key.Trim().Length <= 100 && Regex.IsMatch(key.Trim(), "^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.IgnoreCase);
 static string NormalizeKey(string value) => value.Trim().ToLowerInvariant();
 static string NormalizeNamespace(string value) => value.Trim().Replace("https://", "", StringComparison.OrdinalIgnoreCase).TrimEnd('/');
+static Guid GetUserId(ClaimsPrincipal user) => Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
 static TenantResponse ToResponse(Tenant tenant, int count) => new(tenant.Id, tenant.Name, tenant.IsEnabled, tenant.CreatedAt, tenant.UpdatedAt, count);
 static TopicResponse ToTopicResponse(Topic topic) => new(topic.Id, topic.TenantId, topic.Key, topic.Name, topic.IsEnabled,
     topic.IsSharePointWebhook, topic.UseManagedIdentity, topic.FullyQualifiedNamespace, !string.IsNullOrWhiteSpace(topic.ServiceBusConnectionString),
     topic.ServiceBusTopicName, topic.CreatedAt, topic.UpdatedAt);
 
-public sealed record ReceivedRequest(Guid Id, string TenantId, string TopicName, DateTimeOffset ReceivedAt, string Payload);
+public sealed record ReceivedRequest(
+    Guid Id,
+    string TenantId,
+    string TopicName,
+    DateTimeOffset ReceivedAt,
+    string Payload,
+    [property: JsonIgnore] Guid CreatedByUserId);
 public sealed class WebhookHub : Hub;
 public partial class Program;

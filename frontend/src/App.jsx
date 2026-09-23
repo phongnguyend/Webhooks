@@ -6,6 +6,12 @@ import {
 } from 'lucide-react'
 
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5229').replace(/\/$/, '')
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
+const GOOGLE_REDIRECT_URI = import.meta.env.VITE_GOOGLE_REDIRECT_URI
+  || (typeof window === 'undefined' ? '' : `${window.location.origin}${window.location.pathname}`)
+const GOOGLE_STATE_KEY = 'webhook-router-google-state'
+const GOOGLE_NONCE_KEY = 'webhook-router-google-nonce'
+const TOKEN_KEY = 'webhook-router-token'
 const emptyTenant = { name: '', isEnabled: true }
 const emptyTopic = {
   key: '', name: '', isEnabled: true, isSharePointWebhook: false,
@@ -13,16 +19,63 @@ const emptyTopic = {
 }
 
 async function api(path, options) {
+  const token = sessionStorage.getItem(TOKEN_KEY)
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options?.headers },
   })
+  if (response.status === 401 && token) {
+    sessionStorage.removeItem(TOKEN_KEY)
+    window.dispatchEvent(new Event('webhook-router-auth-expired'))
+  }
   if (!response.ok) {
     const problem = await response.json().catch(() => ({}))
     throw new Error(problem.error || problem.detail || `Request failed (${response.status})`)
   }
   return response.status === 204 ? null : response.json()
 }
+
+function randomUrlToken() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
+}
+
+function decodeJwtPayload(token) {
+  const encoded = token.split('.')[1]?.replaceAll('-', '+').replaceAll('_', '/')
+  if (!encoded) throw new Error('Google returned an invalid ID token.')
+  const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=')
+  const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0))
+  return JSON.parse(new TextDecoder().decode(bytes))
+}
+
+function consumeGoogleRedirect() {
+  if (typeof window === 'undefined' || !window.location.hash) return { token: null, error: '' }
+  const response = new URLSearchParams(window.location.hash.slice(1))
+  const token = response.get('id_token')
+  const oauthError = response.get('error')
+  if (!token && !oauthError) return { token: null, error: '' }
+
+  window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`)
+  const expectedState = sessionStorage.getItem(GOOGLE_STATE_KEY)
+  const expectedNonce = sessionStorage.getItem(GOOGLE_NONCE_KEY)
+  sessionStorage.removeItem(GOOGLE_STATE_KEY)
+  sessionStorage.removeItem(GOOGLE_NONCE_KEY)
+
+  if (oauthError) return { token: null, error: response.get('error_description') || 'Google sign-in was cancelled.' }
+  if (!expectedState || response.get('state') !== expectedState) return { token: null, error: 'Google sign-in state validation failed.' }
+
+  try {
+    if (!expectedNonce || decodeJwtPayload(token).nonce !== expectedNonce)
+      return { token: null, error: 'Google sign-in nonce validation failed.' }
+    sessionStorage.setItem(TOKEN_KEY, token)
+    return { token, error: '' }
+  } catch (error) {
+    return { token: null, error: error.message || 'Google returned an invalid ID token.' }
+  }
+}
+
+const googleRedirect = consumeGoogleRedirect()
 
 function parsePayload(payload) {
   if (typeof payload !== 'string') return payload
@@ -39,6 +92,10 @@ function formatDate(value) {
 function eventId(event) { return event.id || `${event.receivedAt}-${event.tenantId}-${event.topicName}` }
 
 export default function App() {
+  const [accessToken, setAccessToken] = useState(() => googleRedirect.token || sessionStorage.getItem(TOKEN_KEY))
+  const [user, setUser] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [loginError, setLoginError] = useState(googleRedirect.error)
   const [view, setView] = useState('manage')
   const [events, setEvents] = useState([])
   const [selectedEventId, setSelectedEventId] = useState(null)
@@ -51,6 +108,21 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState(null)
   const [dialog, setDialog] = useState(null)
+
+  useEffect(() => {
+    if (!accessToken) { setUser(null); setAuthLoading(false); return }
+    setAuthLoading(true)
+    api('/api/auth/me')
+      .then(setUser)
+      .catch(() => { sessionStorage.removeItem(TOKEN_KEY); setAccessToken(null); setUser(null) })
+      .finally(() => setAuthLoading(false))
+  }, [accessToken])
+
+  useEffect(() => {
+    const expired = () => { setAccessToken(null); setUser(null) }
+    window.addEventListener('webhook-router-auth-expired', expired)
+    return () => window.removeEventListener('webhook-router-auth-expired', expired)
+  }, [])
 
   async function loadTenants(preferredId) {
     const result = await api('/api/tenants')
@@ -68,12 +140,14 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!user) return
     loadTenants().catch(showError).finally(() => setLoading(false))
-  }, [])
+  }, [user])
 
-  useEffect(() => { loadTopics(selectedTenantId).catch(showError) }, [selectedTenantId])
+  useEffect(() => { if (user) loadTopics(selectedTenantId).catch(showError) }, [selectedTenantId, user])
 
   useEffect(() => {
+    if (!user) return
     let active = true
     let connection
     async function connect() {
@@ -83,7 +157,10 @@ export default function App() {
           setEvents(history)
           setSelectedEventId((current) => current || (history[0] ? eventId(history[0]) : null))
         }
-        connection = new signalR.HubConnectionBuilder().withUrl(`${API_URL}/hubs/events`)
+        connection = new signalR.HubConnectionBuilder().withUrl(`${API_URL}/hubs/events`, {
+          withCredentials: false,
+          accessTokenFactory: () => accessToken,
+        })
           .withAutomaticReconnect().configureLogging(signalR.LogLevel.Warning).build()
         connection.on('WebhookReceived', (event) => {
           if (!active) return
@@ -102,7 +179,7 @@ export default function App() {
     }
     connect()
     return () => { active = false; connection?.stop() }
-  }, [])
+  }, [user, accessToken])
 
   function showError(error) { setNotice({ kind: 'error', text: error.message || 'Something went wrong.' }) }
   function showSuccess(text) { setNotice({ kind: 'success', text }); window.setTimeout(() => setNotice(null), 2600) }
@@ -192,6 +269,44 @@ export default function App() {
     window.setTimeout(() => setCopied(false), 1600)
   }
 
+  function startGoogleRedirect() {
+    setLoginError('')
+    if (!GOOGLE_CLIENT_ID) {
+      setLoginError('Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.')
+      return
+    }
+
+    const state = randomUrlToken()
+    const nonce = randomUrlToken()
+    sessionStorage.setItem(GOOGLE_STATE_KEY, state)
+    sessionStorage.setItem(GOOGLE_NONCE_KEY, nonce)
+    const authorizeUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
+    authorizeUrl.search = new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: GOOGLE_REDIRECT_URI,
+      response_type: 'id_token',
+      response_mode: 'fragment',
+      scope: 'openid email profile',
+      prompt: 'select_account',
+      state,
+      nonce,
+    }).toString()
+    window.location.assign(authorizeUrl)
+  }
+
+  function logout() {
+    sessionStorage.removeItem(TOKEN_KEY)
+    setAccessToken(null)
+    setUser(null)
+    setTenants([])
+    setTopics([])
+    setEvents([])
+  }
+
+  if (authLoading) return <div className="auth-screen"><div className="auth-card"><span className="brand-mark"><Webhook size={24} /></span><p>Loading Webhook Router…</p></div></div>
+
+  if (!user) return <div className="auth-screen"><div className="auth-card"><span className="brand-mark auth-logo"><Webhook size={26} /></span><span className="eyebrow">Webhook Router</span><h1>Route webhooks with confidence.</h1><p>Sign in to manage your private tenants, topic routes, and live event stream.</p><button type="button" className="google-button" onClick={startGoogleRedirect}><GoogleLogo /> Continue with Google</button>{loginError && <p className="login-error">{loginError}</p>}</div></div>
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -200,7 +315,7 @@ export default function App() {
           <button className={view === 'manage' ? 'active' : ''} onClick={() => setView('manage')}><Settings2 size={16} /> Configuration</button>
           <button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}><Eye size={16} /> Events <span>{events.length}</span></button>
         </nav>
-        <div className={`connection-pill ${connectionStatus}`}><span className="pulse-dot" />{connectionStatus === 'connected' ? 'Live' : connectionStatus}</div>
+        <div className="account-area"><div className={`connection-pill ${connectionStatus}`}><span className="pulse-dot" />{connectionStatus === 'connected' ? 'Live' : connectionStatus}</div><div className="user-menu"><span title={user.email}>{user.email.slice(0, 1).toUpperCase()}</span><small>{user.email}</small><button onClick={logout}>Sign out</button></div></div>
       </header>
 
       {notice && <div className={`toast ${notice.kind}`}><span>{notice.text}</span><button onClick={() => setNotice(null)} aria-label="Dismiss"><X size={15} /></button></div>}
@@ -256,6 +371,10 @@ export default function App() {
       {dialog?.type === 'test' && <TestPayloadDialog tenantId={selectedTenantId} topic={dialog.item} onClose={() => setDialog(null)} onSend={sendTestPayload} />}
     </main>
   )
+}
+
+function GoogleLogo() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.8 3-4.3 3-7.4Z"/><path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1a5.8 5.8 0 0 1-5.5-4H3.2v2.6A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.5 14a6 6 0 0 1 0-4V7.4H3.2a10 10 0 0 0 0 9.2L6.5 14Z"/><path fill="#EA4335" d="M12 5.9c1.5 0 2.8.5 3.8 1.5l2.9-2.8A9.7 9.7 0 0 0 3.2 7.4L6.5 10A5.8 5.8 0 0 1 12 5.9Z"/></svg>
 }
 
 function Status({ enabled }) { return <span className={`status-badge ${enabled ? 'enabled' : ''}`}>{enabled ? 'Enabled' : 'Disabled'}</span> }
