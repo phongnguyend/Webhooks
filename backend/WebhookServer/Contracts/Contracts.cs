@@ -20,7 +20,8 @@ public sealed record TopicRequest(
     bool UseManagedIdentity,
     string? FullyQualifiedNamespace,
     string? ServiceBusConnectionString,
-    string ServiceBusTopicName);
+    string ServiceBusEntityName,
+    string ServiceBusEntityType = "Topic");
 
 public sealed record TopicResponse(
     Guid Id,
@@ -32,7 +33,8 @@ public sealed record TopicResponse(
     bool UseManagedIdentity,
     string? FullyQualifiedNamespace,
     bool HasServiceBusConnection,
-    string ServiceBusTopicName,
+    string ServiceBusEntityType,
+    string ServiceBusEntityName,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 

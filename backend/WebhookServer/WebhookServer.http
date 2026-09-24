@@ -33,7 +33,8 @@ Content-Type: application/json
   "useManagedIdentity": true,
   "fullyQualifiedNamespace": "my-namespace.servicebus.windows.net",
   "serviceBusConnectionString": null,
-  "serviceBusTopicName": "incoming-orders"
+  "serviceBusEntityName": "incoming-orders",
+  "serviceBusEntityType": "Topic"
 }
 
 ###

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as signalR from '@microsoft/signalr'
+import ThemeSwitcher from './ThemeSwitcher'
 import {
   Braces, Check, ChevronRight, CircleAlert, Clock3, Copy, Database, Edit3, Eye,
   Layers3, Plus, Radio, Search, Send, Settings2, Trash2, Webhook, X,
@@ -15,7 +16,7 @@ const TOKEN_KEY = 'webhook-router-token'
 const emptyTenant = { name: '', isEnabled: true }
 const emptyTopic = {
   key: '', name: '', isEnabled: true, isSharePointWebhook: false,
-  useManagedIdentity: true, fullyQualifiedNamespace: '', serviceBusConnectionString: '', serviceBusTopicName: '',
+  useManagedIdentity: true, fullyQualifiedNamespace: '', serviceBusConnectionString: '', serviceBusEntityName: '', serviceBusEntityType: 'Topic',
 }
 
 async function api(path, options) {
@@ -313,9 +314,9 @@ export default function App() {
     setEvents([])
   }
 
-  if (authLoading) return <div className="auth-screen"><div className="auth-card"><span className="brand-mark"><Webhook size={24} /></span><p>Loading Webhook Router…</p></div></div>
+  if (authLoading) return <div className="auth-screen"><div className="auth-theme"><ThemeSwitcher /></div><div className="auth-card"><span className="brand-mark"><Webhook size={24} /></span><p>Loading Webhook Router…</p></div></div>
 
-  if (!user) return <div className="auth-screen"><div className="auth-card"><span className="brand-mark auth-logo"><Webhook size={26} /></span><span className="eyebrow">Webhook Router</span><h1>Route webhooks with confidence.</h1><p>Sign in to manage your private tenants, topic routes, and live event stream.</p><button type="button" className="google-button" onClick={startGoogleRedirect}><GoogleLogo /> Continue with Google</button>{loginError && <p className="login-error">{loginError}</p>}</div></div>
+  if (!user) return <div className="auth-screen"><div className="auth-theme"><ThemeSwitcher /></div><div className="auth-card"><span className="brand-mark auth-logo"><Webhook size={26} /></span><span className="eyebrow">Webhook Router</span><h1>Route webhooks with confidence.</h1><p>Sign in to manage your private tenants, topic routes, and live event stream.</p><button type="button" className="google-button" onClick={startGoogleRedirect}><GoogleLogo /> Continue with Google</button>{loginError && <p className="login-error">{loginError}</p>}</div></div>
 
   return (
     <main className="app-shell">
@@ -325,7 +326,7 @@ export default function App() {
           <button className={view === 'manage' ? 'active' : ''} onClick={() => setView('manage')}><Settings2 size={16} /> Configuration</button>
           <button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}><Eye size={16} /> Events <span>{events.length}</span></button>
         </nav>
-        <div className="account-area"><div className={`connection-pill ${connectionStatus}`}><span className="pulse-dot" />{connectionStatus === 'connected' ? 'Live' : connectionStatus}</div><div className="user-menu"><button className="profile-trigger" onClick={() => setDialog({ type: 'profile' })} title={user.email}><span>{userDisplayName.slice(0, 1).toUpperCase()}</span><small>{userDisplayName}</small></button><button className="signout-button" onClick={logout}>Sign out</button></div></div>
+        <div className="account-area"><ThemeSwitcher /><div className={`connection-pill ${connectionStatus}`}><span className="pulse-dot" />{connectionStatus === 'connected' ? 'Live' : connectionStatus}</div><div className="user-menu"><button className="profile-trigger" onClick={() => setDialog({ type: 'profile' })} title={user.email}><span>{userDisplayName.slice(0, 1).toUpperCase()}</span><small>{userDisplayName}</small></button><button className="signout-button" onClick={logout}>Sign out</button></div></div>
       </header>
 
       {notice && <div className={`toast ${notice.kind}`}><span>{notice.text}</span><button onClick={() => setNotice(null)} aria-label="Dismiss"><X size={15} /></button></div>}
@@ -363,11 +364,11 @@ export default function App() {
                 {topics.map((topic) => <article className={`topic-card ${!topic.isEnabled ? 'disabled' : ''}`} key={topic.id}>
                   <div className="topic-card-top"><span className="topic-icon"><Database size={18} /></span><Status enabled={topic.isEnabled} /></div>
                   <h4>{topic.name}</h4><p className="topic-key">/{topic.key}{topic.isSharePointWebhook && <span className="sharepoint-label">SharePoint webhook</span>}</p>
-                  <div className="destination"><span>Azure Service Bus topic</span><strong>{topic.serviceBusTopicName}</strong><small>{topic.useManagedIdentity ? topic.fullyQualifiedNamespace : 'Connection string credentials'}</small></div>
+                  <div className="destination"><span>Azure Service Bus {(topic.serviceBusEntityType || 'Topic').toLowerCase()}</span><strong>{topic.serviceBusEntityName}</strong><small>{topic.useManagedIdentity ? topic.fullyQualifiedNamespace : 'Connection string credentials'}</small></div>
                   <div className="endpoint"><code>{API_URL}/tenants/{selectedTenant.id}/topics/{topic.key}</code><button onClick={() => copy(`${API_URL}/tenants/${selectedTenant.id}/topics/${topic.key}`)} title="Copy endpoint"><Copy size={14} /></button></div>
                   <div className="card-actions"><button onClick={() => toggleTopic(topic)}>{topic.isEnabled ? 'Disable' : 'Enable'}</button><span /><button onClick={() => setDialog({ type: 'test', item: topic })}><Send size={15} /> Test</button><button onClick={() => setDialog({ type: 'topic', item: topic })}><Edit3 size={15} /> Edit</button><button className="danger-text" onClick={() => deleteTopic(topic)}><Trash2 size={15} /></button></div>
                 </article>)}
-                {topics.length === 0 && <div className="wide-empty"><Empty icon={Database} title="No topic routes" text="Add a route and map it to an Azure Service Bus topic." /><button className="primary-button" onClick={() => setDialog({ type: 'topic', item: null })}><Plus size={16} /> Add topic</button></div>}
+                {topics.length === 0 && <div className="wide-empty"><Empty icon={Database} title="No topic routes" text="Add a route and map it to an Azure Service Bus topic or queue." /><button className="primary-button" onClick={() => setDialog({ type: 'topic', item: null })}><Plus size={16} /> Add topic</button></div>}
               </div>
             </> : <Empty icon={Layers3} title="Select or create a tenant" text="Tenant configuration and topic routes will appear here." />}
           </section>
@@ -444,15 +445,15 @@ function TopicDialog({ item, onClose, onSave }) {
   const [form, setForm] = useState(item ? {
     key: item.key, name: item.name, isEnabled: item.isEnabled, isSharePointWebhook: item.isSharePointWebhook,
     useManagedIdentity: item.useManagedIdentity, fullyQualifiedNamespace: item.fullyQualifiedNamespace || '',
-    serviceBusConnectionString: '', serviceBusTopicName: item.serviceBusTopicName,
+    serviceBusConnectionString: '', serviceBusEntityName: item.serviceBusEntityName, serviceBusEntityType: item.serviceBusEntityType || 'Topic',
   } : emptyTopic)
-  const [topicCopied, setTopicCopied] = useState(false)
+  const [entityCopied, setEntityCopied] = useState(false)
 
-  async function copyServiceBusTopic() {
-    if (!form.serviceBusTopicName) return
-    await navigator.clipboard.writeText(form.serviceBusTopicName)
-    setTopicCopied(true)
-    window.setTimeout(() => setTopicCopied(false), 1600)
+  async function copyServiceBusEntity() {
+    if (!form.serviceBusEntityName) return
+    await navigator.clipboard.writeText(form.serviceBusEntityName)
+    setEntityCopied(true)
+    window.setTimeout(() => setEntityCopied(false), 1600)
   }
 
   return <Dialog title={item ? 'Edit topic route' : 'Add topic route'} onClose={onClose} onSubmit={() => onSave(form)}>
@@ -462,11 +463,15 @@ function TopicDialog({ item, onClose, onSave }) {
       <button type="button" className={!form.useManagedIdentity ? 'active' : ''} onClick={() => setForm({ ...form, useManagedIdentity: false, fullyQualifiedNamespace: '' })}><strong>Connection String</strong><small>Use a namespace access key</small></button>
     </div></fieldset>
     {form.useManagedIdentity ? <Field label="Fully qualified namespace" hint="Example: my-namespace.servicebus.windows.net"><input required maxLength="300" value={form.fullyQualifiedNamespace} onChange={(e) => setForm({ ...form, fullyQualifiedNamespace: e.target.value })} placeholder="my-namespace.servicebus.windows.net" /></Field> : <Field label="Connection string" hint={item?.hasServiceBusConnection ? 'Leave blank to keep the stored connection string.' : 'The secret is stored but never returned by the API.'}><input type="password" required={!item?.hasServiceBusConnection} maxLength="2000" value={form.serviceBusConnectionString} onChange={(e) => setForm({ ...form, serviceBusConnectionString: e.target.value })} placeholder={item?.hasServiceBusConnection ? 'Connection string stored — enter to replace' : 'Endpoint=sb://…'} autoComplete="new-password" /></Field>}
-    <Field label="Azure Service Bus topic" hint="The topic must already exist in the selected namespace.">
+    <fieldset className="auth-fieldset"><legend>Destination type</legend><div className="auth-options">
+      <button type="button" className={form.serviceBusEntityType === 'Topic' ? 'active' : ''} onClick={() => setForm({ ...form, serviceBusEntityType: 'Topic' })}><strong>Topic</strong><small>Publish to a Service Bus topic</small></button>
+      <button type="button" className={form.serviceBusEntityType === 'Queue' ? 'active' : ''} onClick={() => setForm({ ...form, serviceBusEntityType: 'Queue' })}><strong>Queue</strong><small>Send to a Service Bus queue</small></button>
+    </div></fieldset>
+    <Field label={`Azure Service Bus ${form.serviceBusEntityType.toLowerCase()}`} hint={`The ${form.serviceBusEntityType.toLowerCase()} must already exist in the selected namespace.`}>
       <div className="topic-input-with-copy">
-        <input required maxLength="260" value={form.serviceBusTopicName} onChange={(e) => setForm({ ...form, serviceBusTopicName: e.target.value })} placeholder="order-created" />
-        <button type="button" onClick={copyServiceBusTopic} disabled={!form.serviceBusTopicName} title="Copy Azure Service Bus topic" aria-label="Copy Azure Service Bus topic">
-          {topicCopied ? <Check size={15} /> : <Copy size={15} />}
+        <input required maxLength="260" value={form.serviceBusEntityName} onChange={(e) => setForm({ ...form, serviceBusEntityName: e.target.value })} placeholder={form.serviceBusEntityType === 'Queue' ? 'incoming-orders' : 'order-created'} />
+        <button type="button" onClick={copyServiceBusEntity} disabled={!form.serviceBusEntityName} title={`Copy Azure Service Bus ${form.serviceBusEntityType.toLowerCase()}`} aria-label={`Copy Azure Service Bus ${form.serviceBusEntityType.toLowerCase()}`}>
+          {entityCopied ? <Check size={15} /> : <Copy size={15} />}
         </button>
       </div>
     </Field>
@@ -495,7 +500,7 @@ function TestPayloadDialog({ tenantId, topic, onClose, onSend }) {
 
   return <Dialog title={`Test ${topic.name}`} onClose={onClose} onSubmit={submit} submitLabel={sending ? 'Sending…' : 'Send payload'} submitDisabled={sending}>
     <div className="test-route"><span>POST</span><code>{API_URL}/tenants/{tenantId}/topics/{topic.key}</code></div>
-    <Field label="JSON payload" hint="This uses the real webhook route and publishes to the configured Azure Service Bus topic.">
+    <Field label="JSON payload" hint={`This uses the real webhook route and publishes to the configured Azure Service Bus ${(topic.serviceBusEntityType || 'Topic').toLowerCase()}.`}>
       <textarea autoFocus value={payload} onChange={(event) => { setPayload(event.target.value); setError('') }} spellCheck="false" />
     </Field>
     {error && <p className="form-error" role="alert">{error}</p>}

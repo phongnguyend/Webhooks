@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WebhookServer.Data;
 
@@ -11,9 +12,11 @@ using WebhookServer.Data;
 namespace WebhookServer.Data.Migrations
 {
     [DbContext(typeof(WebhookDbContext))]
-    partial class WebhookDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260924004136_AddServiceBusQueueDestination")]
+    partial class AddServiceBusQueueDestination
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

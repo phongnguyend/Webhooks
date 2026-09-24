@@ -11,7 +11,8 @@ public sealed class Topic
     public bool UseManagedIdentity { get; set; }
     public string? FullyQualifiedNamespace { get; set; }
     public string? ServiceBusConnectionString { get; set; }
-    public required string ServiceBusTopicName { get; set; }
+    public string ServiceBusEntityType { get; set; } = "Topic";
+    public required string ServiceBusEntityName { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public Tenant Tenant { get; set; } = null!;

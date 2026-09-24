@@ -52,7 +52,8 @@ public sealed class WebhookDbContext(DbContextOptions<WebhookDbContext> options)
             entity.Property(x => x.Name).HasMaxLength(200);
             entity.Property(x => x.FullyQualifiedNamespace).HasMaxLength(300);
             entity.Property(x => x.ServiceBusConnectionString).HasMaxLength(2000);
-            entity.Property(x => x.ServiceBusTopicName).HasMaxLength(260);
+            entity.Property(x => x.ServiceBusEntityType).HasMaxLength(10).HasDefaultValue("Topic");
+            entity.Property(x => x.ServiceBusEntityName).HasMaxLength(260);
         });
     }
 }

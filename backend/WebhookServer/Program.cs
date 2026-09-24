@@ -227,7 +227,8 @@ tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest re
         UseManagedIdentity = request.UseManagedIdentity,
         FullyQualifiedNamespace = request.UseManagedIdentity ? NormalizeNamespace(request.FullyQualifiedNamespace!) : null,
         ServiceBusConnectionString = request.UseManagedIdentity ? null : request.ServiceBusConnectionString!.Trim(),
-        ServiceBusTopicName = request.ServiceBusTopicName.Trim()
+        ServiceBusEntityType = NormalizeServiceBusEntityType(request.ServiceBusEntityType),
+        ServiceBusEntityName = request.ServiceBusEntityName.Trim()
     };
     db.Topics.Add(topic);
     await db.SaveChangesAsync(ct);
@@ -251,7 +252,8 @@ tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, G
     topic.IsSharePointWebhook = request.IsSharePointWebhook;
     topic.UseManagedIdentity = request.UseManagedIdentity;
     topic.FullyQualifiedNamespace = request.UseManagedIdentity ? NormalizeNamespace(request.FullyQualifiedNamespace!) : null;
-    topic.ServiceBusTopicName = request.ServiceBusTopicName.Trim();
+    topic.ServiceBusEntityType = NormalizeServiceBusEntityType(request.ServiceBusEntityType);
+    topic.ServiceBusEntityName = request.ServiceBusEntityName.Trim();
     if (request.UseManagedIdentity) topic.ServiceBusConnectionString = null;
     else if (!string.IsNullOrWhiteSpace(request.ServiceBusConnectionString)) topic.ServiceBusConnectionString = request.ServiceBusConnectionString.Trim();
     topic.UpdatedAt = DateTimeOffset.UtcNow;
@@ -301,7 +303,7 @@ app.MapPost("/tenants/{tenantId:guid}/topics/{topicKey}", async (
     try
     {
         await publisher.PublishAsync(topic.UseManagedIdentity, topic.FullyQualifiedNamespace, topic.ServiceBusConnectionString,
-            topic.ServiceBusTopicName, body, topic.TenantId, topic.Key, request.ContentType, ct);
+            topic.ServiceBusEntityName, body, topic.TenantId, topic.Key, request.ContentType, ct);
     }
     catch (Exception exception)
     {
@@ -329,7 +331,8 @@ static IResult? ValidateTopic(TopicRequest request, bool isCreate, bool hasStore
 {
     if (!ValidKey(request.Key)) return Results.BadRequest(new { error = "Topic key must be 1-100 letters, numbers, or hyphens." });
     if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length > 200) return Results.BadRequest(new { error = "Topic name is required and must be at most 200 characters." });
-    if (string.IsNullOrWhiteSpace(request.ServiceBusTopicName) || request.ServiceBusTopicName.Trim().Length > 260) return Results.BadRequest(new { error = "Azure Service Bus topic name is required and must be at most 260 characters." });
+    if (!ValidServiceBusEntityType(request.ServiceBusEntityType)) return Results.BadRequest(new { error = "Azure Service Bus destination type must be Topic or Queue." });
+    if (string.IsNullOrWhiteSpace(request.ServiceBusEntityName) || request.ServiceBusEntityName.Trim().Length > 260) return Results.BadRequest(new { error = "Azure Service Bus entity name is required and must be at most 260 characters." });
     if (request.UseManagedIdentity && string.IsNullOrWhiteSpace(request.FullyQualifiedNamespace)) return Results.BadRequest(new { error = "Fully qualified namespace is required for managed identity." });
     if (request.UseManagedIdentity && request.FullyQualifiedNamespace!.Trim().Length > 300) return Results.BadRequest(new { error = "Fully qualified namespace must be at most 300 characters." });
     if (!request.UseManagedIdentity && string.IsNullOrWhiteSpace(request.ServiceBusConnectionString) && (isCreate || !hasStoredConnection)) return Results.BadRequest(new { error = "Connection string is required when managed identity is disabled." });
@@ -338,15 +341,17 @@ static IResult? ValidateTopic(TopicRequest request, bool isCreate, bool hasStore
 }
 
 static bool ValidKey(string? key) => !string.IsNullOrWhiteSpace(key) && key.Trim().Length <= 100 && Regex.IsMatch(key.Trim(), "^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.IgnoreCase);
+static bool ValidServiceBusEntityType(string? value) => string.Equals(value, "Topic", StringComparison.OrdinalIgnoreCase) || string.Equals(value, "Queue", StringComparison.OrdinalIgnoreCase);
 static string NormalizeKey(string value) => value.Trim().ToLowerInvariant();
 static string NormalizeNamespace(string value) => value.Trim().Replace("https://", "", StringComparison.OrdinalIgnoreCase).TrimEnd('/');
+static string NormalizeServiceBusEntityType(string value) => string.Equals(value, "Queue", StringComparison.OrdinalIgnoreCase) ? "Queue" : "Topic";
 static string? NormalizeProfileName(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 static Guid GetUserId(ClaimsPrincipal user) => Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
 static object ToUserResponse(AppUser user) => new { id = user.Id, username = user.UserName, email = user.Email, firstName = user.FirstName, lastName = user.LastName, phoneNumber = user.PhoneNumber };
 static TenantResponse ToResponse(Tenant tenant, int count) => new(tenant.Id, tenant.Name, tenant.IsEnabled, tenant.CreatedAt, tenant.UpdatedAt, count);
 static TopicResponse ToTopicResponse(Topic topic) => new(topic.Id, topic.TenantId, topic.Key, topic.Name, topic.IsEnabled,
     topic.IsSharePointWebhook, topic.UseManagedIdentity, topic.FullyQualifiedNamespace, !string.IsNullOrWhiteSpace(topic.ServiceBusConnectionString),
-    topic.ServiceBusTopicName, topic.CreatedAt, topic.UpdatedAt);
+    topic.ServiceBusEntityType, topic.ServiceBusEntityName, topic.CreatedAt, topic.UpdatedAt);
 
 public sealed record ReceivedRequest(
     Guid Id,

@@ -13,7 +13,7 @@ public sealed class ServiceBusPublisher : IAsyncDisposable
         bool useManagedIdentity,
         string? fullyQualifiedNamespace,
         string? connectionString,
-        string serviceBusTopicName,
+        string serviceBusEntityName,
         string body,
         Guid tenantId,
         string topicKey,
@@ -28,7 +28,7 @@ public sealed class ServiceBusPublisher : IAsyncDisposable
                 connectionString!,
                 value => new ServiceBusClient(value));
 
-        await using var sender = client.CreateSender(serviceBusTopicName);
+        await using var sender = client.CreateSender(serviceBusEntityName);
         var message = new ServiceBusMessage(body)
         {
             ContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType,
