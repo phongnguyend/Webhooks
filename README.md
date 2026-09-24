@@ -56,7 +56,9 @@ Open `http://localhost:5173`. EF Core applies database migrations when the API s
 
 The application currently supports **Global Admin** and **User** roles using ASP.NET Core Identity. New and existing accounts without a role receive User. Tenant Admin is reserved for a future change.
 
-Global Admins can open **Users** to search/view accounts and enable or disable them. Users cannot access these administration endpoints. Administrators cannot disable themselves or the last enabled Global Admin. Tenant ownership rules still apply to both roles.
+Global Admins can open **Users** to create accounts by email, edit first/last name and phone, assign User and/or Global Admin roles, and enable or disable accounts. Users cannot access these administration endpoints. Administrators cannot disable themselves, remove their own Global Admin role, or disable/demote the last enabled Global Admin. Tenant ownership rules still apply to both roles.
+
+Preconfigured accounts have no password and receive no invitation email. Their first Google login with the matching verified email links to the existing database user ID and preserves configured profile details and roles. Email is set at creation and cannot be changed afterward, even before the first Google login. Unregistered Google users still receive a new User account, as before. Tenant Admin is not yet assignable.
 
 Disabled accounts are rejected on subsequent authenticated API requests, even with an unexpired Google token, and receive no new live events. Disabling an account does not disable its public webhook routes; disable tenants/topics separately to stop routing.
 

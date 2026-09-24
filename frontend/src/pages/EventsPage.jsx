@@ -1,0 +1,13 @@
+import { Braces, Check, ChevronRight, CircleAlert, Clock3, Copy, Radio, Search } from 'lucide-react'
+import Empty from '../components/Empty'
+
+function formatDate(value) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'Unknown time' : new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).format(date)
+}
+
+export default function EventsPage({ events, filteredEvents, selectedEvent, selectedEventId, setSelectedEventId, query, setQuery, formattedPayload, copied, copy, status }) {
+  return <section className="event-workspace"><aside className="event-panel"><div className="section-heading"><div><span className="eyebrow">Incoming</span><h2>Events <span>{events.length}</span></h2></div><Radio size={20} /></div><label className="search-field"><Search size={17} /><span className="sr-only">Search events</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter events…" /></label><div className="event-list">{filteredEvents.map((event) => <button className={`event-card ${selectedEventId === event._id ? 'selected' : ''}`} key={event._id} onClick={() => setSelectedEventId(event._id)}><span className="event-icon"><Braces size={17} /></span><span className="event-copy"><strong>{event.topicName}</strong><span className="tenant-label">{event.tenantId}</span><span className="timestamp"><Clock3 size={12} /> {formatDate(event.receivedAt)}</span></span><ChevronRight size={17} /></button>)}{filteredEvents.length === 0 && <Empty icon={Radio} title={events.length ? 'No matching events' : 'Waiting for events'} text={events.length ? 'Try a different filter.' : 'Published webhooks appear here instantly.'} />}</div></aside><section className="detail-panel">{selectedEvent ? <><div className="detail-header"><div><span className="eyebrow">Event payload</span><h2>{selectedEvent.topicName}</h2><div className="metadata"><span>{selectedEvent.tenantId}</span><i /><span>{formatDate(selectedEvent.receivedAt)}</span></div></div><button className="secondary-button" onClick={() => copy()}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? 'Copied' : 'Copy JSON'}</button></div><div className="code-wrap"><div className="code-toolbar"><span><span className="file-dot" /> payload.json</span><span>{formattedPayload.split('\n').length} lines</span></div><pre><code>{formattedPayload}</code></pre></div></> : <div className="empty-detail">{status === 'disconnected' ? <CircleAlert size={36} /> : <Radio size={36} />}<h2>{status === 'disconnected' ? 'Server is offline' : 'No events yet'}</h2><p>Successfully published webhook messages will appear here.</p></div>}</section></section>
+}

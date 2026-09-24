@@ -1,6 +1,7 @@
 namespace WebhookRouter.Contracts;
 
 public sealed record UserProfileRequest(string? FirstName, string? LastName, string? PhoneNumber);
+public sealed record ManageUserRequest(string Email, string? FirstName, string? LastName, string? PhoneNumber, bool IsEnabled, string[] Roles);
 
 public sealed record TenantRequest(string Name, bool IsEnabled = true);
 public sealed record AuditUserResponse(Guid Id, string? FirstName, string? LastName, string? Email);

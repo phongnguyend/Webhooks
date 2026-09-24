@@ -1,0 +1,1 @@
+export default function Toggle({ checked, onChange, label, text }) { return <label className="toggle-row"><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} /><span className="switch" /><span><strong>{label}</strong><small>{text}</small></span></label> }

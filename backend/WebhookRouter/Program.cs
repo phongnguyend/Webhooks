@@ -77,10 +77,23 @@ builder.Services.AddAuthentication(options =>
                     return;
                 }
 
-                if ((await userManager.GetLoginsAsync(user)).All(x => x.LoginProvider != "Google" || x.ProviderKey != subject))
+                var logins = await userManager.GetLoginsAsync(user);
+                if (logins.Any(x => x.LoginProvider == "Google" && x.ProviderKey != subject))
+                {
+                    context.Fail("This application account is linked to a different Google account.");
+                    return;
+                }
+                if (logins.All(x => x.LoginProvider != "Google" || x.ProviderKey != subject))
                 {
                     var loginResult = await userManager.AddLoginAsync(user, new UserLoginInfo("Google", subject, "Google"));
                     if (!loginResult.Succeeded) { context.Fail("Unable to link the Google account."); return; }
+                }
+
+                if (!user.EmailConfirmed && string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
+                {
+                    user.EmailConfirmed = true;
+                    var confirmed = await userManager.UpdateAsync(user);
+                    if (!confirmed.Succeeded) { context.Fail("Unable to confirm the application email."); return; }
                 }
 
                 var roles = await userManager.GetRolesAsync(user);
@@ -200,15 +213,20 @@ app.MapPut("/api/auth/me", async (UserProfileRequest request, ClaimsPrincipal pr
 var tenants = app.MapGroup("/api/tenants").RequireAuthorization();
 
 var users = app.MapGroup("/api/users").RequireAuthorization(AppRoles.ManageUsers);
+users.MapPost("/", (ManageUserRequest request, ClaimsPrincipal principal, UserManager<AppUser> manager, WebhookDbContext db, CancellationToken ct) =>
+    UserAdministration.SaveAsync(null, request, principal, manager, db, ct));
+users.MapPut("/{userId:guid}", (Guid userId, ManageUserRequest request, ClaimsPrincipal principal, UserManager<AppUser> manager, WebhookDbContext db, CancellationToken ct) =>
+    UserAdministration.SaveAsync(userId, request, principal, manager, db, ct));
 users.MapGet("/", async (WebhookDbContext db, CancellationToken ct) =>
 {
     var accounts = await db.Users.AsNoTracking().OrderBy(x => x.Email)
-        .Select(x => new { x.Id, username = x.UserName, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled }).ToListAsync(ct);
+        .Select(x => new { x.Id, username = x.UserName, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled,
+            HasExternalLogin = db.UserLogins.Any(login => login.UserId == x.Id) }).ToListAsync(ct);
     var memberships = await (from membership in db.UserRoles
         join role in db.Roles on membership.RoleId equals role.Id
         select new { membership.UserId, role.Name }).ToListAsync(ct);
     var rolesByUser = memberships.ToLookup(x => x.UserId, x => x.Name);
-    return Results.Ok(accounts.Select(x => new { x.Id, x.username, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled, roles = rolesByUser[x.Id].ToArray() }));
+    return Results.Ok(accounts.Select(x => new { x.Id, x.username, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled, x.HasExternalLogin, roles = rolesByUser[x.Id].ToArray() }));
 });
 users.MapPatch("/{userId:guid}/enabled", async (Guid userId, EnabledRequest request, ClaimsPrincipal principal, WebhookDbContext db, CancellationToken ct) =>
 {
