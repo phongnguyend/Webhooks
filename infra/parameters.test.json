@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "test"
+    },
+    "namePrefix": {
+      "value": "webhookrouter"
+    },
+    "additionalTags": {
+      "value": {}
+    },
+    "location": {
+      "value": "southeastasia"
+    },
+    "staticWebAppLocation": {
+      "value": "eastasia"
+    },
+    "appServicePlanSku": {
+      "value": "B1"
+    },
+    "staticWebAppSku": {
+      "value": "Free"
+    },
+    "sqlAdministratorObjectId": {
+      "value": "00000000-0000-0000-0000-000000000000"
+    },
+    "sqlAdministratorDisplayName": {
+      "value": "webhookrouter-test-sql-admins"
+    },
+    "googleClientId": {
+      "value": "REPLACE_WITH_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+    },
+    "serviceBusTopics": {
+      "value": []
+    },
+    "serviceBusQueues": {
+      "value": []
+    }
+  }
+}

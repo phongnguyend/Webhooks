@@ -54,6 +54,8 @@ Open `http://localhost:5173`. EF Core applies database migrations when the API s
 
 ## Production configuration
 
+See [infra/README.md](infra/README.md) for Azure infrastructure, dev/test parameters, deployment setup, and the frontend/backend CI workflows.
+
 Use environment variables or your hosting platform's secure configuration rather than committing secrets:
 
 ```text
