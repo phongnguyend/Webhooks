@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 
-namespace WebhookServer.Services;
+namespace WebhookRouter.Services;
 
 public sealed class ServiceBusPublisher : IAsyncDisposable
 {

@@ -1,18 +1,18 @@
-@WebhookServer_HostAddress = http://localhost:5229
+@WebhookRouter_HostAddress = http://localhost:5229
 @tenantId = replace-after-creation
 @topicId = replace-after-creation
 
-GET {{WebhookServer_HostAddress}}/healthz
+GET {{WebhookRouter_HostAddress}}/healthz
 Accept: application/json
 
 ###
 
-GET {{WebhookServer_HostAddress}}/api/tenants
+GET {{WebhookRouter_HostAddress}}/api/tenants
 Accept: application/json
 
 ###
 
-POST {{WebhookServer_HostAddress}}/api/tenants
+POST {{WebhookRouter_HostAddress}}/api/tenants
 Content-Type: application/json
 
 {
@@ -22,7 +22,7 @@ Content-Type: application/json
 
 ###
 
-POST {{WebhookServer_HostAddress}}/api/tenants/{{tenantId}}/topics
+POST {{WebhookRouter_HostAddress}}/api/tenants/{{tenantId}}/topics
 Content-Type: application/json
 
 {
@@ -39,7 +39,7 @@ Content-Type: application/json
 
 ###
 
-POST {{WebhookServer_HostAddress}}/tenants/{{tenantId}}/topics/orders
+POST {{WebhookRouter_HostAddress}}/tenants/{{tenantId}}/topics/orders
 Content-Type: application/json
 
 {
@@ -49,7 +49,7 @@ Content-Type: application/json
 
 ###
 
-PATCH {{WebhookServer_HostAddress}}/api/tenants/{{tenantId}}/topics/{{topicId}}/enabled
+PATCH {{WebhookRouter_HostAddress}}/api/tenants/{{tenantId}}/topics/{{topicId}}/enabled
 Content-Type: application/json
 
 {

@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 
-namespace WebhookServer.Models;
+namespace WebhookRouter.Models;
 
 public sealed class AppUser : IdentityUser<Guid>
 {

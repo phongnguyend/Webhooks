@@ -1,9 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
-using WebhookServer.Models;
+using WebhookRouter.Models;
 
-namespace WebhookServer.Data;
+namespace WebhookRouter.Data;
 
 public sealed class WebhookDbContext(DbContextOptions<WebhookDbContext> options) : IdentityDbContext<AppUser, IdentityRole<Guid>, Guid>(options)
 {

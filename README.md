@@ -16,7 +16,7 @@ An ASP.NET Core and React application for managing tenant-specific webhook route
 
 Requirements: .NET 10, Node.js, and SQL Server LocalDB (or another local SQL Server instance).
 
-The development database connection is in `backend/WebhookServer/appsettings.Development.json`. Override it with `ConnectionStrings__DefaultConnection` if LocalDB is not available.
+The development database connection is in `backend/WebhookRouter/appsettings.Development.json`. Override it with `ConnectionStrings__DefaultConnection` if LocalDB is not available.
 
 Create a Google OAuth web client and register this authorized redirect URI:
 
@@ -27,7 +27,7 @@ http://localhost:5173/
 Configure the same public Google client ID in the API and UI. The redirect URI defaults to the current UI page, or it can be set explicitly:
 
 ```powershell
-dotnet user-secrets set "Authentication:Google:ClientId" "<client-id>" --project backend/WebhookServer
+dotnet user-secrets set "Authentication:Google:ClientId" "<client-id>" --project backend/WebhookRouter
 $env:VITE_GOOGLE_CLIENT_ID = "<client-id>"
 $env:VITE_GOOGLE_REDIRECT_URI = "http://localhost:5173/"
 ```
@@ -41,7 +41,7 @@ Connection strings are stored in SQL Server so the API can publish, but are neve
 Start the API and frontend:
 
 ```powershell
-dotnet run --project backend/WebhookServer
+dotnet run --project backend/WebhookRouter
 ```
 
 ```powershell

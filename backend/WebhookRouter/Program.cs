@@ -6,10 +6,10 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
-using WebhookServer.Contracts;
-using WebhookServer.Data;
-using WebhookServer.Models;
-using WebhookServer.Services;
+using WebhookRouter.Contracts;
+using WebhookRouter.Data;
+using WebhookRouter.Models;
+using WebhookRouter.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")

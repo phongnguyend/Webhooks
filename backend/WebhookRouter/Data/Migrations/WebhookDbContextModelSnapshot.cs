@@ -3,20 +3,17 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using WebhookServer.Data;
+using WebhookRouter.Data;
 
 #nullable disable
 
-namespace WebhookServer.Data.Migrations
+namespace WebhookRouter.Data.Migrations
 {
     [DbContext(typeof(WebhookDbContext))]
-    [Migration("20260924004136_AddServiceBusQueueDestination")]
-    partial class AddServiceBusQueueDestination
+    partial class WebhookDbContextModelSnapshot : ModelSnapshot
     {
-        /// <inheritdoc />
-        protected override void BuildTargetModel(ModelBuilder modelBuilder)
+        protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -156,7 +153,7 @@ namespace WebhookServer.Data.Migrations
                     b.ToTable("UserTokens", (string)null);
                 });
 
-            modelBuilder.Entity("WebhookServer.Models.AppUser", b =>
+            modelBuilder.Entity("WebhookRouter.Models.AppUser", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -231,7 +228,7 @@ namespace WebhookServer.Data.Migrations
                     b.ToTable("Users", (string)null);
                 });
 
-            modelBuilder.Entity("WebhookServer.Models.Tenant", b =>
+            modelBuilder.Entity("WebhookRouter.Models.Tenant", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -262,7 +259,7 @@ namespace WebhookServer.Data.Migrations
                     b.ToTable("Tenants");
                 });
 
-            modelBuilder.Entity("WebhookServer.Models.Topic", b =>
+            modelBuilder.Entity("WebhookRouter.Models.Topic", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -336,7 +333,7 @@ namespace WebhookServer.Data.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserClaim<System.Guid>", b =>
                 {
-                    b.HasOne("WebhookServer.Models.AppUser", null)
+                    b.HasOne("WebhookRouter.Models.AppUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -345,7 +342,7 @@ namespace WebhookServer.Data.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<System.Guid>", b =>
                 {
-                    b.HasOne("WebhookServer.Models.AppUser", null)
+                    b.HasOne("WebhookRouter.Models.AppUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -360,7 +357,7 @@ namespace WebhookServer.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("WebhookServer.Models.AppUser", null)
+                    b.HasOne("WebhookRouter.Models.AppUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -369,16 +366,16 @@ namespace WebhookServer.Data.Migrations
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserToken<System.Guid>", b =>
                 {
-                    b.HasOne("WebhookServer.Models.AppUser", null)
+                    b.HasOne("WebhookRouter.Models.AppUser", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("WebhookServer.Models.Tenant", b =>
+            modelBuilder.Entity("WebhookRouter.Models.Tenant", b =>
                 {
-                    b.HasOne("WebhookServer.Models.AppUser", "CreatedByUser")
+                    b.HasOne("WebhookRouter.Models.AppUser", "CreatedByUser")
                         .WithMany("Tenants")
                         .HasForeignKey("CreatedByUserId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -387,9 +384,9 @@ namespace WebhookServer.Data.Migrations
                     b.Navigation("CreatedByUser");
                 });
 
-            modelBuilder.Entity("WebhookServer.Models.Topic", b =>
+            modelBuilder.Entity("WebhookRouter.Models.Topic", b =>
                 {
-                    b.HasOne("WebhookServer.Models.Tenant", "Tenant")
+                    b.HasOne("WebhookRouter.Models.Tenant", "Tenant")
                         .WithMany("Topics")
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
@@ -398,12 +395,12 @@ namespace WebhookServer.Data.Migrations
                     b.Navigation("Tenant");
                 });
 
-            modelBuilder.Entity("WebhookServer.Models.AppUser", b =>
+            modelBuilder.Entity("WebhookRouter.Models.AppUser", b =>
                 {
                     b.Navigation("Tenants");
                 });
 
-            modelBuilder.Entity("WebhookServer.Models.Tenant", b =>
+            modelBuilder.Entity("WebhookRouter.Models.Tenant", b =>
                 {
                     b.Navigation("Topics");
                 });

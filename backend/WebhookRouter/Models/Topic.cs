@@ -1,4 +1,4 @@
-namespace WebhookServer.Models;
+namespace WebhookRouter.Models;
 
 public sealed class Topic
 {

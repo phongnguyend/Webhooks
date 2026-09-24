@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace WebhookServer.Data.Migrations
+namespace WebhookRouter.Data.Migrations
 {
     /// <inheritdoc />
     public partial class AddUserProfileNames : Migration

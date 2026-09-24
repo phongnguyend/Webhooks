@@ -1,4 +1,4 @@
-namespace WebhookServer.Contracts;
+namespace WebhookRouter.Contracts;
 
 public sealed record UserProfileRequest(string? FirstName, string? LastName, string? PhoneNumber);
 
