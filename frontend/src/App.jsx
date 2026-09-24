@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as signalR from '@microsoft/signalr'
 import ThemeSwitcher from './ThemeSwitcher'
+import UsersPanel from './UsersPanel'
+import RecordTimestamps from './RecordTimestamps'
 import {
   Braces, Check, ChevronRight, CircleAlert, Clock3, Copy, Database, Edit3, Eye,
   Layers3, Plus, Radio, Search, Send, Settings2, Trash2, Webhook, X,
@@ -306,6 +308,8 @@ export default function App() {
   }
 
   function logout() {
+    setView('manage')
+    setDialog(null)
     sessionStorage.removeItem(TOKEN_KEY)
     setAccessToken(null)
     setUser(null)
@@ -325,13 +329,14 @@ export default function App() {
         <nav className="tabs" aria-label="Primary navigation">
           <button className={view === 'manage' ? 'active' : ''} onClick={() => setView('manage')}><Settings2 size={16} /> Configuration</button>
           <button className={view === 'events' ? 'active' : ''} onClick={() => setView('events')}><Eye size={16} /> Events <span>{events.length}</span></button>
+          {user.roles?.includes('Global Admin') && <button className={view === 'users' ? 'active' : ''} onClick={() => setView('users')}>Users</button>}
         </nav>
         <div className="account-area"><ThemeSwitcher /><div className={`connection-pill ${connectionStatus}`}><span className="pulse-dot" />{connectionStatus === 'connected' ? 'Live' : connectionStatus}</div><div className="user-menu"><button className="profile-trigger" onClick={() => setDialog({ type: 'profile' })} title={user.email}><span>{userDisplayName.slice(0, 1).toUpperCase()}</span><small>{userDisplayName}</small></button><button className="signout-button" onClick={logout}>Sign out</button></div></div>
       </header>
 
       {notice && <div className={`toast ${notice.kind}`}><span>{notice.text}</span><button onClick={() => setNotice(null)} aria-label="Dismiss"><X size={15} /></button></div>}
 
-      {view === 'manage' ? (
+      {view === 'users' && user.roles?.includes('Global Admin') ? <UsersPanel api={api} currentUser={user} /> : view === 'manage' ? (
         <section className="management">
           <aside className="tenant-sidebar">
             <div className="section-heading"><div><span className="eyebrow">Workspace</span><h2>Tenants <span>{tenants.length}</span></h2></div><button className="icon-button primary" onClick={() => setDialog({ type: 'tenant', item: null })} title="New tenant"><Plus size={18} /></button></div>
@@ -348,7 +353,7 @@ export default function App() {
           <section className="topic-workspace">
             {selectedTenant ? <>
               <div className="workspace-header">
-                <div><span className="eyebrow">Tenant</span><div className="title-line"><h2>{selectedTenant.name}</h2><Status enabled={selectedTenant.isEnabled} /></div><p className="route-preview">POST {API_URL}/tenants/{selectedTenant.id}/topics/<em>topic-key</em></p></div>
+                <div><span className="eyebrow">Tenant</span><div className="title-line"><h2>{selectedTenant.name}</h2><Status enabled={selectedTenant.isEnabled} /></div><p className="route-preview">POST {API_URL}/tenants/{selectedTenant.id}/topics/<em>topic-key</em></p><RecordTimestamps createdAt={selectedTenant.createdAt} updatedAt={selectedTenant.updatedAt} createdByUser={selectedTenant.createdByUser} updatedByUser={selectedTenant.updatedByUser} /></div>
                 <div className="header-actions">
                   <button className="secondary-button" onClick={() => copy(selectedTenant.id)} title="Copy tenant ID">
                     {copied ? <Check size={15} /> : <Copy size={15} />}
@@ -366,6 +371,7 @@ export default function App() {
                   <h4>{topic.name}</h4><p className="topic-key">/{topic.key}{topic.isSharePointWebhook && <span className="sharepoint-label">SharePoint webhook</span>}</p>
                   <div className="destination"><span>Azure Service Bus {(topic.serviceBusEntityType || 'Topic').toLowerCase()}</span><strong>{topic.serviceBusEntityName}</strong><small>{topic.useManagedIdentity ? topic.fullyQualifiedNamespace : 'Connection string credentials'}</small></div>
                   <div className="endpoint"><code>{API_URL}/tenants/{selectedTenant.id}/topics/{topic.key}</code><button onClick={() => copy(`${API_URL}/tenants/${selectedTenant.id}/topics/${topic.key}`)} title="Copy endpoint"><Copy size={14} /></button></div>
+                  <RecordTimestamps createdAt={topic.createdAt} updatedAt={topic.updatedAt} createdByUser={topic.createdByUser} updatedByUser={topic.updatedByUser} />
                   <div className="card-actions"><button onClick={() => toggleTopic(topic)}>{topic.isEnabled ? 'Disable' : 'Enable'}</button><span /><button onClick={() => setDialog({ type: 'test', item: topic })}><Send size={15} /> Test</button><button onClick={() => setDialog({ type: 'topic', item: topic })}><Edit3 size={15} /> Edit</button><button className="danger-text" onClick={() => deleteTopic(topic)}><Trash2 size={15} /></button></div>
                 </article>)}
                 {topics.length === 0 && <div className="wide-empty"><Empty icon={Database} title="No topic routes" text="Add a route and map it to an Azure Service Bus topic or queue." /><button className="primary-button" onClick={() => setDialog({ type: 'topic', item: null })}><Plus size={16} /> Add topic</button></div>}

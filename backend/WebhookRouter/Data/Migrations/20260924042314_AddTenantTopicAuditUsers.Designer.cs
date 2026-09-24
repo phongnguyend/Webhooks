@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WebhookRouter.Data;
 
@@ -11,9 +12,11 @@ using WebhookRouter.Data;
 namespace WebhookRouter.Data.Migrations
 {
     [DbContext(typeof(WebhookDbContext))]
-    partial class WebhookDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260924042314_AddTenantTopicAuditUsers")]
+    partial class AddTenantTopicAuditUsers
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

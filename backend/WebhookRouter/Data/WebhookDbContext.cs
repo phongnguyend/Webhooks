@@ -20,8 +20,13 @@ public sealed class WebhookDbContext(DbContextOptions<WebhookDbContext> options)
             entity.Property(x => x.Id).HasDefaultValueSql("NEWSEQUENTIALID()");
             entity.Property(x => x.FirstName).HasMaxLength(100);
             entity.Property(x => x.LastName).HasMaxLength(100);
+            entity.Property(x => x.IsEnabled).HasDefaultValue(true);
         });
-        modelBuilder.Entity<IdentityRole<Guid>>().ToTable("Roles");
+        modelBuilder.Entity<IdentityRole<Guid>>(entity =>
+        {
+            entity.ToTable("Roles");
+            entity.Property(x => x.Id).HasDefaultValueSql("NEWSEQUENTIALID()");
+        });
         modelBuilder.Entity<IdentityUserClaim<Guid>>().ToTable("UserClaims");
         modelBuilder.Entity<IdentityUserLogin<Guid>>().ToTable("UserLogins");
         modelBuilder.Entity<IdentityUserToken<Guid>>().ToTable("UserTokens");
@@ -30,6 +35,7 @@ public sealed class WebhookDbContext(DbContextOptions<WebhookDbContext> options)
 
         modelBuilder.Entity<Tenant>(entity =>
         {
+            entity.HasOne(x => x.UpdatedByUser).WithMany().HasForeignKey(x => x.UpdatedByUserId).OnDelete(DeleteBehavior.NoAction);
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Id).HasDefaultValueSql("NEWSEQUENTIALID()");
             entity.Property(x => x.Name).HasMaxLength(200);
@@ -45,6 +51,8 @@ public sealed class WebhookDbContext(DbContextOptions<WebhookDbContext> options)
 
         modelBuilder.Entity<Topic>(entity =>
         {
+            entity.HasOne(x => x.CreatedByUser).WithMany().HasForeignKey(x => x.CreatedByUserId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(x => x.UpdatedByUser).WithMany().HasForeignKey(x => x.UpdatedByUserId).OnDelete(DeleteBehavior.NoAction);
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Id).HasDefaultValueSql("NEWSEQUENTIALID()");
             entity.HasIndex(x => new { x.TenantId, x.Key }).IsUnique();

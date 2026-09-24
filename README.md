@@ -52,6 +52,25 @@ npm run dev
 
 Open `http://localhost:5173`. EF Core applies database migrations when the API starts.
 
+## User administration
+
+The application currently supports **Global Admin** and **User** roles using ASP.NET Core Identity. New and existing accounts without a role receive User. Tenant Admin is reserved for a future change.
+
+Global Admins can open **Users** to search/view accounts and enable or disable them. Users cannot access these administration endpoints. Administrators cannot disable themselves or the last enabled Global Admin. Tenant ownership rules still apply to both roles.
+
+Disabled accounts are rejected on subsequent authenticated API requests, even with an unexpired Google token, and receive no new live events. Disabling an account does not disable its public webhook routes; disable tenants/topics separately to stop routing.
+
+To bootstrap an administrator, first sign in once to create the application account, then restart the API with a process-scoped environment variable:
+
+```powershell
+$env:BOOTSTRAP_GLOBAL_ADMIN_EMAIL = "<existing-google-login-email>"
+dotnet run --project backend/WebhookRouter
+# After stopping the setup process, remove the variable before normal startup:
+Remove-Item Env:BOOTSTRAP_GLOBAL_ADMIN_EMAIL
+```
+
+The role assignment persists in SQL. Never commit the administrator email to configuration files. Refresh the UI after assigning the role. Migrations preserve existing users and enable them by default.
+
 ## Production configuration
 
 See [infra/README.md](infra/README.md) for Azure infrastructure, dev/test parameters, deployment setup, and the frontend/backend CI workflows.

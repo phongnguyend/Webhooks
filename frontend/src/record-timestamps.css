@@ -1,0 +1,15 @@
+.record-timestamps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 14px 0 0;
+  color: #65716d;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.record-timestamps dt { font-weight: 700; }
+.record-timestamps dd { margin: 0; overflow-wrap: anywhere; }
+.record-timestamps .audit-user, .record-timestamps .audit-email { display: block; }
+.record-timestamps > div { min-width: 0; max-width: 100%; }
+.topic-card .record-timestamps { margin: 0 0 16px; }
+[data-theme=dark] .record-timestamps { color: #a4b9ad; }

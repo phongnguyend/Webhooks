@@ -3,6 +3,7 @@ namespace WebhookRouter.Contracts;
 public sealed record UserProfileRequest(string? FirstName, string? LastName, string? PhoneNumber);
 
 public sealed record TenantRequest(string Name, bool IsEnabled = true);
+public sealed record AuditUserResponse(Guid Id, string? FirstName, string? LastName, string? Email);
 
 public sealed record TenantResponse(
     Guid Id,
@@ -10,7 +11,9 @@ public sealed record TenantResponse(
     bool IsEnabled,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    int TopicCount);
+    int TopicCount,
+    AuditUserResponse? CreatedByUser,
+    AuditUserResponse? UpdatedByUser);
 
 public sealed record TopicRequest(
     string Key,
@@ -36,6 +39,8 @@ public sealed record TopicResponse(
     string ServiceBusEntityType,
     string ServiceBusEntityName,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    AuditUserResponse? CreatedByUser,
+    AuditUserResponse? UpdatedByUser);
 
 public sealed record EnabledRequest(bool IsEnabled);

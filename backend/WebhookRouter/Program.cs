@@ -71,18 +71,37 @@ builder.Services.AddAuthentication(options =>
                     if (!createResult.Succeeded) { context.Fail("Unable to create the application user."); return; }
                 }
 
+                if (!user.IsEnabled)
+                {
+                    context.Fail("This account is disabled.");
+                    return;
+                }
+
                 if ((await userManager.GetLoginsAsync(user)).All(x => x.LoginProvider != "Google" || x.ProviderKey != subject))
                 {
                     var loginResult = await userManager.AddLoginAsync(user, new UserLoginInfo("Google", subject, "Google"));
                     if (!loginResult.Succeeded) { context.Fail("Unable to link the Google account."); return; }
                 }
 
+                var roles = await userManager.GetRolesAsync(user);
+                if (roles.Count == 0)
+                {
+                    var result = await userManager.AddToRoleAsync(user, AppRoles.User);
+                    if (!result.Succeeded) { context.Fail("Unable to assign the application role."); return; }
+                    roles = await userManager.GetRolesAsync(user);
+                }
+
                 if (context.Principal?.Identity is ClaimsIdentity identity)
+                {
+                    foreach (var claim in identity.FindAll(ClaimTypes.NameIdentifier).Concat(identity.FindAll(identity.RoleClaimType)).ToArray())
+                        identity.RemoveClaim(claim);
                     identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()));
+                    foreach (var role in roles) identity.AddClaim(new Claim(identity.RoleClaimType, role));
+                }
             }
         };
     });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options => options.AddPolicy(AppRoles.ManageUsers, policy => policy.RequireRole(AppRoles.GlobalAdmin)));
 builder.Services.AddSingleton<ServiceBusPublisher>();
 builder.Services.AddSingleton<ConcurrentQueue<ReceivedRequest>>();
 builder.Services.AddSignalR();
@@ -96,6 +115,37 @@ var app = builder.Build();
 await using (var scope = app.Services.CreateAsyncScope())
 {
     await scope.ServiceProvider.GetRequiredService<WebhookDbContext>().Database.MigrateAsync();
+    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
+    foreach (var role in new[] { AppRoles.GlobalAdmin, AppRoles.User })
+    {
+        if (!await roleManager.RoleExistsAsync(role))
+        {
+            var result = await roleManager.CreateAsync(new IdentityRole<Guid>(role));
+            if (!result.Succeeded && !await roleManager.RoleExistsAsync(role))
+                throw new InvalidOperationException($"Unable to initialize role {role}.");
+        }
+    }
+    var db = scope.ServiceProvider.GetRequiredService<WebhookDbContext>();
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+    var usersWithoutRoles = await db.Users.Where(user => !db.UserRoles.Any(role => role.UserId == user.Id)).ToListAsync();
+    foreach (var user in usersWithoutRoles)
+    {
+        var result = await userManager.AddToRoleAsync(user, AppRoles.User);
+        if (!result.Succeeded) throw new InvalidOperationException("Unable to initialize user role.");
+    }
+    // Supply only during initial setup; never automatically promote the first login.
+    var adminEmail = builder.Configuration["BOOTSTRAP_GLOBAL_ADMIN_EMAIL"]?.Trim();
+    if (!string.IsNullOrWhiteSpace(adminEmail))
+    {
+        var admin = await userManager.FindByEmailAsync(adminEmail);
+        if (admin is null || !admin.IsEnabled)
+            throw new InvalidOperationException("Bootstrap administrator must be an existing enabled user. Sign in first, then rerun setup.");
+        if (!await userManager.IsInRoleAsync(admin, AppRoles.GlobalAdmin))
+        {
+            var result = await userManager.AddToRoleAsync(admin, AppRoles.GlobalAdmin);
+            if (!result.Succeeded) throw new InvalidOperationException("Unable to initialize Global Admin.");
+        }
+    }
 }
 
 app.UseCors();
@@ -119,7 +169,7 @@ app.MapGet("/api/auth/me", async (ClaimsPrincipal principal, UserManager<AppUser
     var user = await userManager.GetUserAsync(principal);
     return user is null
         ? Results.Unauthorized()
-        : Results.Ok(ToUserResponse(user));
+        : Results.Ok(ToUserResponse(user, await userManager.GetRolesAsync(user)));
 }).RequireAuthorization();
 
 app.MapPut("/api/auth/me", async (UserProfileRequest request, ClaimsPrincipal principal, UserManager<AppUser> userManager) =>
@@ -143,17 +193,49 @@ app.MapPut("/api/auth/me", async (UserProfileRequest request, ClaimsPrincipal pr
     }
     var result = await userManager.UpdateAsync(user);
     return result.Succeeded
-        ? Results.Ok(ToUserResponse(user))
+        ? Results.Ok(ToUserResponse(user, await userManager.GetRolesAsync(user)))
         : Results.BadRequest(new { error = string.Join(" ", result.Errors.Select(x => x.Description)) });
 }).RequireAuthorization();
 
 var tenants = app.MapGroup("/api/tenants").RequireAuthorization();
 
+var users = app.MapGroup("/api/users").RequireAuthorization(AppRoles.ManageUsers);
+users.MapGet("/", async (WebhookDbContext db, CancellationToken ct) =>
+{
+    var accounts = await db.Users.AsNoTracking().OrderBy(x => x.Email)
+        .Select(x => new { x.Id, username = x.UserName, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled }).ToListAsync(ct);
+    var memberships = await (from membership in db.UserRoles
+        join role in db.Roles on membership.RoleId equals role.Id
+        select new { membership.UserId, role.Name }).ToListAsync(ct);
+    var rolesByUser = memberships.ToLookup(x => x.UserId, x => x.Name);
+    return Results.Ok(accounts.Select(x => new { x.Id, x.username, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled, roles = rolesByUser[x.Id].ToArray() }));
+});
+users.MapPatch("/{userId:guid}/enabled", async (Guid userId, EnabledRequest request, ClaimsPrincipal principal, WebhookDbContext db, CancellationToken ct) =>
+{
+    if (userId == GetUserId(principal) && !request.IsEnabled)
+        return Results.BadRequest(new { error = "You cannot disable your own account." });
+    // Serialize administrator status changes to prevent disabling the last enabled admin concurrently.
+    await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+    var account = await db.Users.SingleOrDefaultAsync(x => x.Id == userId, ct);
+    if (account is null) return Results.NotFound();
+    var adminIds = from membership in db.UserRoles join role in db.Roles on membership.RoleId equals role.Id
+                   where role.Name == AppRoles.GlobalAdmin select membership.UserId;
+    if (!request.IsEnabled && await adminIds.ContainsAsync(userId, ct)
+        && !await db.Users.AnyAsync(x => x.Id != userId && x.IsEnabled && adminIds.Contains(x.Id), ct))
+        return Results.Conflict(new { error = "At least one Global Admin must remain enabled." });
+    account.IsEnabled = request.IsEnabled;
+    await db.SaveChangesAsync(ct);
+    await transaction.CommitAsync(ct);
+    return Results.NoContent();
+});
+
 tenants.MapGet("/", async (ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
     var userId = GetUserId(user);
     return await db.Tenants.AsNoTracking().Where(x => x.CreatedByUserId == userId).OrderBy(x => x.Name)
-        .Select(x => new TenantResponse(x.Id, x.Name, x.IsEnabled, x.CreatedAt, x.UpdatedAt, x.Topics.Count))
+        .Select(x => new TenantResponse(x.Id, x.Name, x.IsEnabled, x.CreatedAt, x.UpdatedAt, x.Topics.Count,
+            new AuditUserResponse(x.CreatedByUser.Id, x.CreatedByUser.FirstName, x.CreatedByUser.LastName, x.CreatedByUser.Email),
+            x.UpdatedByUser == null ? null : new AuditUserResponse(x.UpdatedByUser.Id, x.UpdatedByUser.FirstName, x.UpdatedByUser.LastName, x.UpdatedByUser.Email)))
         .ToListAsync(ct);
 });
 
@@ -161,9 +243,11 @@ tenants.MapPost("/", async (TenantRequest request, ClaimsPrincipal user, Webhook
 {
     var error = ValidateTenant(request);
     if (error is not null) return error;
-    var tenant = new Tenant { CreatedByUserId = GetUserId(user), Name = request.Name.Trim(), IsEnabled = request.IsEnabled };
+    var tenant = new Tenant { CreatedByUserId = GetUserId(user), UpdatedByUserId = GetUserId(user), Name = request.Name.Trim(), IsEnabled = request.IsEnabled };
     db.Tenants.Add(tenant);
     await db.SaveChangesAsync(ct);
+    await db.Entry(tenant).Reference(x => x.CreatedByUser).LoadAsync(ct);
+    await db.Entry(tenant).Reference(x => x.UpdatedByUser).LoadAsync(ct);
     return Results.Created($"/api/tenants/{tenant.Id}", ToResponse(tenant, 0));
 });
 
@@ -176,8 +260,11 @@ tenants.MapPut("/{tenantId:guid}", async (Guid tenantId, TenantRequest request, 
     if (tenant is null) return Results.NotFound();
     tenant.Name = request.Name.Trim();
     tenant.IsEnabled = request.IsEnabled;
+    tenant.UpdatedByUserId = userId;
     tenant.UpdatedAt = DateTimeOffset.UtcNow;
     await db.SaveChangesAsync(ct);
+    await db.Entry(tenant).Reference(x => x.CreatedByUser).LoadAsync(ct);
+    await db.Entry(tenant).Reference(x => x.UpdatedByUser).LoadAsync(ct);
     return Results.Ok(ToResponse(tenant, await db.Topics.CountAsync(x => x.TenantId == tenantId, ct)));
 });
 
@@ -188,6 +275,7 @@ tenants.MapPatch("/{tenantId:guid}/enabled", async (Guid tenantId, EnabledReques
     if (tenant is null) return Results.NotFound();
     tenant.IsEnabled = request.IsEnabled;
     tenant.UpdatedAt = DateTimeOffset.UtcNow;
+    tenant.UpdatedByUserId = userId;
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
 });
@@ -206,7 +294,8 @@ tenants.MapGet("/{tenantId:guid}/topics", async (Guid tenantId, ClaimsPrincipal 
 {
     var userId = GetUserId(user);
     if (!await db.Tenants.AnyAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct)) return Results.NotFound();
-    var topics = await db.Topics.AsNoTracking().Where(x => x.TenantId == tenantId).OrderBy(x => x.Name).ToListAsync(ct);
+    var topics = await db.Topics.AsNoTracking().Include(x => x.CreatedByUser).Include(x => x.UpdatedByUser)
+        .Where(x => x.TenantId == tenantId).OrderBy(x => x.Name).ToListAsync(ct);
     return Results.Ok(topics.Select(ToTopicResponse));
 });
 
@@ -223,6 +312,7 @@ tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest re
     var topic = new Topic
     {
         TenantId = tenantId, Key = key, Name = request.Name.Trim(), IsEnabled = request.IsEnabled,
+        CreatedByUserId = userId, UpdatedByUserId = userId,
         IsSharePointWebhook = request.IsSharePointWebhook,
         UseManagedIdentity = request.UseManagedIdentity,
         FullyQualifiedNamespace = request.UseManagedIdentity ? NormalizeNamespace(request.FullyQualifiedNamespace!) : null,
@@ -232,6 +322,8 @@ tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest re
     };
     db.Topics.Add(topic);
     await db.SaveChangesAsync(ct);
+    await db.Entry(topic).Reference(x => x.CreatedByUser).LoadAsync(ct);
+    await db.Entry(topic).Reference(x => x.UpdatedByUser).LoadAsync(ct);
     return Results.Created($"/api/tenants/{tenantId}/topics/{topic.Id}", ToTopicResponse(topic));
 });
 
@@ -247,6 +339,7 @@ tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, G
         return Results.Conflict(new { error = "A topic with this key already exists in the tenant." });
 
     topic.Key = key;
+    topic.UpdatedByUserId = userId;
     topic.Name = request.Name.Trim();
     topic.IsEnabled = request.IsEnabled;
     topic.IsSharePointWebhook = request.IsSharePointWebhook;
@@ -258,6 +351,8 @@ tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, G
     else if (!string.IsNullOrWhiteSpace(request.ServiceBusConnectionString)) topic.ServiceBusConnectionString = request.ServiceBusConnectionString.Trim();
     topic.UpdatedAt = DateTimeOffset.UtcNow;
     await db.SaveChangesAsync(ct);
+    await db.Entry(topic).Reference(x => x.CreatedByUser).LoadAsync(ct);
+    await db.Entry(topic).Reference(x => x.UpdatedByUser).LoadAsync(ct);
     return Results.Ok(ToTopicResponse(topic));
 });
 
@@ -268,6 +363,7 @@ tenants.MapPatch("/{tenantId:guid}/topics/{topicId:guid}/enabled", async (Guid t
     if (topic is null) return Results.NotFound();
     topic.IsEnabled = request.IsEnabled;
     topic.UpdatedAt = DateTimeOffset.UtcNow;
+    topic.UpdatedByUserId = userId;
     await db.SaveChangesAsync(ct);
     return Results.NoContent();
 });
@@ -314,11 +410,12 @@ app.MapPost("/tenants/{tenantId:guid}/topics/{topicKey}", async (
     var received = new ReceivedRequest(Guid.NewGuid(), topic.TenantId.ToString(), topic.Key, DateTimeOffset.UtcNow, body, topic.Tenant.CreatedByUserId);
     requests.Enqueue(received);
     while (requests.Count > 500) requests.TryDequeue(out _);
-    await hub.Clients.User(topic.Tenant.CreatedByUserId.ToString()).SendAsync("WebhookReceived", received, ct);
+    if (await db.Users.AnyAsync(x => x.Id == topic.Tenant.CreatedByUserId && x.IsEnabled, ct))
+        await hub.Clients.User(topic.Tenant.CreatedByUserId.ToString()).SendAsync("WebhookReceived", received, ct);
     return Results.Accepted(value: received);
 });
 
-app.MapHub<WebhookHub>("/hubs/events").RequireAuthorization();
+app.MapHub<WebhookHub>("/hubs/events", options => options.CloseOnAuthenticationExpiration = true).RequireAuthorization();
 app.Run();
 
 static IResult? ValidateTenant(TenantRequest request)
@@ -347,11 +444,12 @@ static string NormalizeNamespace(string value) => value.Trim().Replace("https://
 static string NormalizeServiceBusEntityType(string value) => string.Equals(value, "Queue", StringComparison.OrdinalIgnoreCase) ? "Queue" : "Topic";
 static string? NormalizeProfileName(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 static Guid GetUserId(ClaimsPrincipal user) => Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
-static object ToUserResponse(AppUser user) => new { id = user.Id, username = user.UserName, email = user.Email, firstName = user.FirstName, lastName = user.LastName, phoneNumber = user.PhoneNumber };
-static TenantResponse ToResponse(Tenant tenant, int count) => new(tenant.Id, tenant.Name, tenant.IsEnabled, tenant.CreatedAt, tenant.UpdatedAt, count);
+static object ToUserResponse(AppUser user, IList<string> roles) => new { id = user.Id, username = user.UserName, email = user.Email, firstName = user.FirstName, lastName = user.LastName, phoneNumber = user.PhoneNumber, isEnabled = user.IsEnabled, roles };
+static AuditUserResponse? ToAuditUser(AppUser? user) => user is null ? null : new(user.Id, user.FirstName, user.LastName, user.Email);
+static TenantResponse ToResponse(Tenant tenant, int count) => new(tenant.Id, tenant.Name, tenant.IsEnabled, tenant.CreatedAt, tenant.UpdatedAt, count, ToAuditUser(tenant.CreatedByUser), ToAuditUser(tenant.UpdatedByUser));
 static TopicResponse ToTopicResponse(Topic topic) => new(topic.Id, topic.TenantId, topic.Key, topic.Name, topic.IsEnabled,
     topic.IsSharePointWebhook, topic.UseManagedIdentity, topic.FullyQualifiedNamespace, !string.IsNullOrWhiteSpace(topic.ServiceBusConnectionString),
-    topic.ServiceBusEntityType, topic.ServiceBusEntityName, topic.CreatedAt, topic.UpdatedAt);
+    topic.ServiceBusEntityType, topic.ServiceBusEntityName, topic.CreatedAt, topic.UpdatedAt, ToAuditUser(topic.CreatedByUser), ToAuditUser(topic.UpdatedByUser));
 
 public sealed record ReceivedRequest(
     Guid Id,

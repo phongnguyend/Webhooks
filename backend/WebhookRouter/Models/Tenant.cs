@@ -4,6 +4,8 @@ public sealed class Tenant
 {
     public Guid Id { get; set; }
     public Guid CreatedByUserId { get; set; }
+    public Guid? UpdatedByUserId { get; set; }
+    public AppUser? UpdatedByUser { get; set; }
     public required string Name { get; set; }
     public bool IsEnabled { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

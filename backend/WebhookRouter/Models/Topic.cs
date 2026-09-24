@@ -4,6 +4,10 @@ public sealed class Topic
 {
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
+    public Guid? CreatedByUserId { get; set; }
+    public AppUser? CreatedByUser { get; set; }
+    public Guid? UpdatedByUserId { get; set; }
+    public AppUser? UpdatedByUser { get; set; }
     public required string Key { get; set; }
     public required string Name { get; set; }
     public bool IsEnabled { get; set; } = true;
