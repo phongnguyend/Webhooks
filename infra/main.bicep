@@ -30,6 +30,10 @@ param sqlAdministratorPrincipalType string = 'Group'
 @description('Public Google OAuth web client ID shared by the API and frontend.')
 @minLength(1)
 param googleClientId string
+@secure()
+@description('Base64-encoded random JWT signing key (at least 32 decoded bytes). Supply from an environment variable; never store in parameter JSON.')
+@minLength(44)
+param jwtSigningKey string
 param additionalFrontendOrigins array = []
 @description('Optional topics to provision in this namespace.')
 param serviceBusTopics array = []
@@ -167,6 +171,9 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-11-01' = {
   properties: union({
     ASPNETCORE_ENVIRONMENT: 'Production'
     Authentication__Google__ClientId: googleClientId
+    Authentication__Jwt__SigningKey: jwtSigningKey
+    Authentication__Jwt__Issuer: '${namePrefix}-${environment}'
+    Authentication__Jwt__Audience: '${namePrefix}-${environment}-api'
     ConnectionStrings__DefaultConnection: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${database.name};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;Authentication=Active Directory Managed Identity;'
   }, toObject(range(0, length(frontendOrigins)), i => 'Cors__AllowedOrigins__${i}', i => frontendOrigins[i]))
 }

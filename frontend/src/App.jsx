@@ -17,7 +17,7 @@ const GOOGLE_REDIRECT_URI = import.meta.env.VITE_GOOGLE_REDIRECT_URI
   || (typeof window === 'undefined' ? '' : `${window.location.origin}${window.location.pathname}`)
 const GOOGLE_STATE_KEY = 'webhook-router-google-state'
 const GOOGLE_NONCE_KEY = 'webhook-router-google-nonce'
-const TOKEN_KEY = 'webhook-router-token'
+const TOKEN_KEY = 'webhook-router-access-token'
 
 async function api(path, options) {
   const token = sessionStorage.getItem(TOKEN_KEY)
@@ -69,7 +69,6 @@ function consumeGoogleRedirect() {
   try {
     if (!expectedNonce || decodeJwtPayload(token).nonce !== expectedNonce)
       return { token: null, error: 'Google sign-in nonce validation failed.' }
-    sessionStorage.setItem(TOKEN_KEY, token)
     return { token, error: '' }
   } catch (error) {
     return { token: null, error: error.message || 'Google returned an invalid ID token.' }
@@ -77,6 +76,26 @@ function consumeGoogleRedirect() {
 }
 
 const googleRedirect = consumeGoogleRedirect()
+
+// One exchange per redirect, including React StrictMode's repeated effect setup.
+const initialSession = (async () => {
+  sessionStorage.removeItem('webhook-router-token') // Discard legacy Google bearer sessions.
+  if (googleRedirect.error) { sessionStorage.removeItem(TOKEN_KEY); return { token: null, error: googleRedirect.error } }
+  if (!googleRedirect.token) return { token: sessionStorage.getItem(TOKEN_KEY), error: '' }
+  const googleToken = googleRedirect.token
+  googleRedirect.token = null
+  sessionStorage.removeItem(TOKEN_KEY)
+  try {
+    const response = await fetch(`${API_URL}/api/auth/exchange/google`, {
+      method: 'POST', headers: { Authorization: `Bearer ${googleToken}` },
+    })
+    if (!response.ok) throw new Error('Unable to sign in. Your account may be disabled or the Google sign-in expired.')
+    const session = await response.json()
+    if (!session.accessToken || session.tokenType !== 'Bearer') throw new Error('Invalid application session response.')
+    sessionStorage.setItem(TOKEN_KEY, session.accessToken)
+    return { token: session.accessToken, error: '' }
+  } catch (error) { return { token: null, error: error.message || 'Unable to sign in.' } }
+})()
 
 function parsePayload(payload) {
   if (typeof payload !== 'string') return payload
@@ -87,7 +106,8 @@ function parsePayload(payload) {
 function eventId(event) { return event.id || `${event.receivedAt}-${event.tenantId}-${event.topicName}` }
 
 export default function App() {
-  const [accessToken, setAccessToken] = useState(() => googleRedirect.token || sessionStorage.getItem(TOKEN_KEY))
+  const [accessToken, setAccessToken] = useState(null)
+  const [initializingSession, setInitializingSession] = useState(true)
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [loginError, setLoginError] = useState(googleRedirect.error)
@@ -105,12 +125,41 @@ export default function App() {
   const [dialog, setDialog] = useState(null)
 
   useEffect(() => {
+    let active = true
+    initialSession.then(({ token, error }) => {
+      if (!active) return
+      setAccessToken(token)
+      setLoginError(error)
+      setInitializingSession(false)
+    })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    if (initializingSession) return
+    let active = true
     if (!accessToken) { setUser(null); setAuthLoading(false); return }
     setAuthLoading(true)
     api('/api/auth/me')
-      .then(setUser)
-      .catch(() => { sessionStorage.removeItem(TOKEN_KEY); setAccessToken(null); setUser(null) })
-      .finally(() => setAuthLoading(false))
+      .then((profile) => { if (active) setUser(profile) })
+      .catch(() => { if (active) { sessionStorage.removeItem(TOKEN_KEY); setAccessToken(null); setUser(null) } })
+      .finally(() => { if (active) setAuthLoading(false) })
+    return () => { active = false }
+  }, [accessToken, initializingSession])
+
+  useEffect(() => {
+    if (!accessToken) return
+    const expire = () => {
+      sessionStorage.removeItem(TOKEN_KEY)
+      window.dispatchEvent(new Event('webhook-router-auth-expired'))
+      setLoginError('Your session expired. Please sign in again.')
+    }
+    try {
+      const expiresAt = Number(decodeJwtPayload(accessToken).exp) * 1000
+      if (!Number.isFinite(expiresAt)) { expire(); return }
+      const timer = window.setTimeout(expire, Math.max(0, expiresAt - Date.now()))
+      return () => window.clearTimeout(timer)
+    } catch { expire() }
   }, [accessToken])
 
   useEffect(() => {

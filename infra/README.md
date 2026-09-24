@@ -25,7 +25,7 @@ az group create --name rg-webhookrouter-dev --location southeastasia
 
 # Populate these environment variables locally or through your CI environment.
 # SQL_ADMINISTRATOR_PRINCIPAL_TYPE must be User or Group.
-$requiredVariables = @('SQL_ADMINISTRATOR_OBJECT_ID', 'SQL_ADMINISTRATOR_DISPLAY_NAME', 'SQL_ADMINISTRATOR_PRINCIPAL_TYPE', 'GOOGLE_CLIENT_ID')
+$requiredVariables = @('SQL_ADMINISTRATOR_OBJECT_ID', 'SQL_ADMINISTRATOR_DISPLAY_NAME', 'SQL_ADMINISTRATOR_PRINCIPAL_TYPE', 'GOOGLE_CLIENT_ID', 'JWT_SIGNING_KEY')
 foreach ($variable in $requiredVariables) {
   if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($variable))) {
     throw "Missing environment variable: $variable"
@@ -36,6 +36,7 @@ $parameterOverrides = @(
   "sqlAdministratorDisplayName=$env:SQL_ADMINISTRATOR_DISPLAY_NAME"
   "sqlAdministratorPrincipalType=$env:SQL_ADMINISTRATOR_PRINCIPAL_TYPE"
   "googleClientId=$env:GOOGLE_CLIENT_ID"
+  "jwtSigningKey=$env:JWT_SIGNING_KEY"
 )
 az deployment group what-if --resource-group rg-webhookrouter-dev --template-file infra/main.bicep --parameters '@infra/parameters.dev.json' @parameterOverrides
 az deployment group create --name webhookrouter-dev --resource-group rg-webhookrouter-dev --template-file infra/main.bicep --parameters '@infra/parameters.dev.json' @parameterOverrides
@@ -59,6 +60,8 @@ ALTER ROLE db_ddladmin ADD MEMBER [<appServiceName>];
 The DDL role is needed because the current API applies EF migrations on startup. Setup must succeed before its first startup; otherwise it cannot migrate or serve requests. For a separate migration deployment process, remove runtime DDL privileges after moving migration execution out of startup. The SQL firewall permits the App Service's possible outbound IPs; rerun infrastructure deployment if the hosting plan's outbound addresses change. This template uses public endpoints with restricted SQL firewall rules, not private networking.
 
 ## Application deployment configuration
+
+The API now issues its own JWTs. Before releasing this version to existing resources, set `Authentication__Jwt__SigningKey` in App Service environment settings (or use a Key Vault reference), or redeploy Bicep with `JWT_SIGNING_KEY` supplied as above. Generate at least 32 cryptographically random bytes and base64-encode them; keep a separate stable key per environment. Never commit the value, put it in frontend `VITE_` variables, or print it in CI logs. Bicep accepts it as a secure parameter and configures environment-specific issuer/audience values. App startup fails if the signing key is missing or invalid. The application release workflow does not configure this secret; it must exist before deployment. See the root README for a key-generation example. No Azure settings are changed automatically by this code update.
 
 - Publish the backend with `dotnet publish backend/WebhookRouter/WebhookRouter.csproj -c Release` and deploy its publish directory to the `appServiceName` output. The template configures SQL, Google client ID, CORS, HTTPS, WebSockets, and `/healthz`.
 - Build the frontend with the values in the `frontendBuildVariables` output and deploy `frontend/dist` to `staticWebAppName`. Vite embeds these values during the build; Static Web App runtime settings cannot change them. The CI build is a compilation check and is not an environment-configured deployment artifact.

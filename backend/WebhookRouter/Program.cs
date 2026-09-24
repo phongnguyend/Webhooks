@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using WebhookRouter.Contracts;
 using WebhookRouter.Data;
 using WebhookRouter.Models;
@@ -24,6 +25,8 @@ builder.Services.AddIdentity<AppUser, IdentityRole<Guid>>(options =>
     .AddEntityFrameworkStores<WebhookDbContext>()
     .AddDefaultTokenProviders();
 var googleClientId = builder.Configuration["Authentication:Google:ClientId"] ?? string.Empty;
+var jwtSessions = new JwtSessionService(builder.Configuration);
+builder.Services.AddSingleton(jwtSessions);
 builder.Services.AddAuthentication(options =>
     {
         options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -31,17 +34,52 @@ builder.Services.AddAuthentication(options =>
     })
     .AddJwtBearer(options =>
     {
-        options.Authority = "https://accounts.google.com";
-        options.Audience = googleClientId;
         options.MapInboundClaims = false;
-        options.TokenValidationParameters.NameClaimType = "email";
+        options.TokenValidationParameters = jwtSessions.ValidationParameters;
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
             {
                 var token = context.Request.Query["access_token"];
-                if (!string.IsNullOrEmpty(token) && context.HttpContext.Request.Path.StartsWithSegments("/hubs/events"))
+                if (!string.IsNullOrEmpty(token) && context.Request.Path.StartsWithSegments("/hubs/events"))
                     context.Token = token;
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = async context =>
+            {
+                if (!Guid.TryParse(context.Principal?.FindFirstValue("sub"), out var id))
+                { context.Fail("Invalid application user."); return; }
+                var manager = context.HttpContext.RequestServices.GetRequiredService<UserManager<AppUser>>();
+                var user = await manager.FindByIdAsync(id.ToString());
+                if (user is null || !user.IsEnabled || string.IsNullOrEmpty(user.SecurityStamp)
+                    || user.SecurityStamp != context.Principal?.FindFirstValue("security_stamp"))
+                { context.Fail("This application session is no longer valid."); return; }
+                // Reload roles so role removals take effect without waiting for JWT expiration.
+                if (context.Principal?.Identity is ClaimsIdentity identity)
+                {
+                    foreach (var claim in identity.FindAll(ClaimTypes.NameIdentifier).Concat(identity.FindAll("role")).ToArray())
+                        identity.RemoveClaim(claim);
+                    identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()));
+                    foreach (var role in await manager.GetRolesAsync(user)) identity.AddClaim(new Claim("role", role));
+                }
+            }
+        };
+    })
+    .AddJwtBearer("GoogleExchange", options =>
+    {
+        options.Authority = "https://accounts.google.com";
+        options.Audience = googleClientId;
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters.NameClaimType = "email";
+        options.TokenValidationParameters.ValidIssuers = ["https://accounts.google.com", "accounts.google.com"];
+        options.TokenValidationParameters.ValidAlgorithms = [SecurityAlgorithms.RsaSha256];
+        options.TokenValidationParameters.ClockSkew = TimeSpan.FromSeconds(30);
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                if (context.Request.Path != "/api/auth/exchange/google" || !HttpMethods.IsPost(context.Request.Method))
+                    context.NoResult();
                 return Task.CompletedTask;
             },
             OnTokenValidated = async context =>
@@ -164,6 +202,14 @@ await using (var scope = app.Services.CreateAsyncScope())
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+app.MapPost("/api/auth/exchange/google", async (HttpContext context, UserManager<AppUser> manager, JwtSessionService sessions) =>
+{
+    var user = await manager.GetUserAsync(context.User);
+    if (user is null || !user.IsEnabled) return Results.Unauthorized();
+    context.Response.Headers.CacheControl = "no-store";
+    context.Response.Headers.Pragma = "no-cache";
+    return Results.Ok(sessions.Issue(user, await manager.GetRolesAsync(user)));
+}).RequireAuthorization(policy => policy.AddAuthenticationSchemes("GoogleExchange").RequireAuthenticatedUser());
 app.MapGet("/healthz", () => Results.Ok(new { status = "Healthy" }));
 app.MapGet("/", (ClaimsPrincipal user, ConcurrentQueue<ReceivedRequest> requests) =>
     requests.Where(x => x.CreatedByUserId == GetUserId(user)).Reverse().Take(500)).RequireAuthorization();
