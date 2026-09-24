@@ -1,0 +1,128 @@
+name: Release to Azure
+run-name: Release ${{ github.ref_name }} to ${{ inputs.environment }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Azure environment to release both applications to
+        type: choice
+        required: true
+        default: dev
+        options: [dev, test]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.FRONTEND_URL }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_WEBAPP_NAME: ${{ vars.AZURE_WEBAPP_NAME }}
+      VITE_API_URL: ${{ vars.API_URL }}
+      VITE_GOOGLE_REDIRECT_URI: ${{ vars.FRONTEND_URL }}/
+      VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate release configuration
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          SWA_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+        run: |
+          set -euo pipefail
+          for name in AZURE_WEBAPP_NAME VITE_API_URL VITE_GOOGLE_CLIENT_ID AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID SWA_TOKEN FRONTEND_URL; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing environment setting: $name"
+              exit 1
+            fi
+          done
+          for name in VITE_API_URL FRONTEND_URL; do
+            if [[ ! "${!name}" =~ ^https://[^/]+$ ]]; then
+              echo "::error::$name must be an HTTPS origin without a trailing slash or path."
+              exit 1
+            fi
+          done
+          if [[ "$GITHUB_REF_TYPE" != branch ]]; then
+            echo '::error::Select a branch when running this release workflow.'
+            exit 1
+          fi
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Publish backend
+        run: dotnet publish backend/WebhookRouter/WebhookRouter.csproj --configuration Release --output publish/backend
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Sign in to Azure using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy backend to App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: publish/backend
+
+      - name: Check backend health
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 12 --retry-all-errors --retry-delay 10 \
+            --connect-timeout 10 --max-time 20 "${VITE_API_URL}/healthz"
+
+      - name: Deploy frontend to Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: upload
+          app_location: frontend/dist
+          api_location: ''
+          output_location: ''
+          skip_app_build: true
+          skip_api_build: true
+          # dev/test are separate Azure resources, not SWA preview environments.
+          production_branch: ${{ github.ref_name }}
+
+      - name: Release summary
+        shell: bash
+        env:
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+        run: |
+          {
+            echo "### Released to $RELEASE_ENVIRONMENT"
+            echo "Commit: $GITHUB_SHA"
+            echo "Backend: $VITE_API_URL"
+            echo "Frontend: $FRONTEND_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

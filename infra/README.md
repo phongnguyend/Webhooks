@@ -71,6 +71,33 @@ The DDL role is needed because the current API applies EF migrations on startup.
 
 The two workflows under `.github/workflows` run independently on relevant pushes, pull requests, or manual dispatch. Frontend uses Node 24, `npm ci`, and the Vite build. Backend uses .NET 10, restores the renamed solution, and builds Release. Neither needs Azure credentials or a database, and neither deploys resources.
 
+## Manual application release
+
+`.github/workflows/release.yml` builds and releases both applications. It runs **only** via **Actions → Release to Azure → Run workflow**, with a branch and `dev` or `test` selection. Merge the workflow into the default branch first so GitHub displays the Run workflow button. It does not provision infrastructure or change parameter files.
+
+Create GitHub environments named `dev` and `test` under repository **Settings → Environments**. Configure these separately for each environment:
+
+| Type | Name | Value |
+| --- | --- | --- |
+| Variable | `AZURE_WEBAPP_NAME` | Bicep `appServiceName` output |
+| Variable | `API_URL` | Bicep `apiUrl` output, no trailing slash |
+| Variable | `FRONTEND_URL` | Bicep `frontendUrl` output or configured custom UI origin, no trailing slash |
+| Secret | `AZURE_CLIENT_ID` | Client ID of the release service principal or user-assigned managed identity |
+| Secret | `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
+| Secret | `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
+| Secret | `GOOGLE_CLIENT_ID` | Same Google OAuth client ID configured on the API |
+| Secret | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Deployment token from the target Static Web App's **Manage deployment token** page |
+
+Google's client ID is public in the built frontend, even when supplied as a GitHub secret. Never provide a Google client secret to Vite. The redirect URI is `FRONTEND_URL` plus `/`; register that exact URI with Google and configure the API's CORS origin accordingly.
+
+Configure [Azure OIDC federation](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-azure) for the release identity, trusting this repository's selected GitHub environment (`dev` or `test`), issuer `https://token.actions.githubusercontent.com`, and audience `api://AzureADTokenExchange`. Use the actual subject format for your repository's OIDC configuration; newer repositories can use immutable repository/owner IDs. Create one federated credential per environment. Grant the identity Website Contributor scoped to the target App Service; it does not need SQL access or subscription-wide Contributor. No Azure client secret or App Service publish profile is required.
+
+Restrict allowed deployment branches in each GitHub environment and add required reviewers where available. Every manually selected branch deploys to the selected Azure resource's primary site, not a Static Web Apps preview. Do not allow untrusted branches to access deployment secrets.
+
+Before the first release, complete **One-time SQL access setup** above. The backend applies additive EF migrations at startup using its App Service managed identity; this workflow does not drop the database or run migrations from the GitHub runner. Ensure backups exist before releases involving schema changes.
+
+Both apps are built before any deployment. The API deploys first, then `/healthz` is checked with retries before the prebuilt UI is uploaded. Releases for the same environment are serialized. A release is not atomic: if the frontend upload fails, the backend may already be updated; inspect the failed run and rerun after fixing the issue. There is no automatic database rollback. Existing CI workflows remain build-only.
+
 ## Local validation
 
 ```powershell
