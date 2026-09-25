@@ -129,10 +129,12 @@ await using (var scope = app.Services.CreateAsyncScope())
 }
 
 app.UseCors();
+app.UseLoginAudit();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 app.MapPasswordSignIn();
+app.MapActivityLog();
 if (microsoftEnabled) app.MapMicrosoftSignIn();
 app.MapGoogleSignIn();
 app.MapGet("/healthz", () => Results.Ok(new { status = "Healthy" }));
@@ -217,6 +219,8 @@ users.MapPatch("/{userId:guid}/enabled", async (Guid userId, EnabledRequest requ
     if (!request.IsEnabled && await adminIds.ContainsAsync(userId, ct)
         && !await db.Users.AnyAsync(x => x.Id != userId && x.IsEnabled && adminIds.Contains(x.Id), ct))
         return Results.Conflict(new { error = "At least one Global Admin must remain enabled." });
+    if (account.IsEnabled != request.IsEnabled)
+        ActivityAudit.Add(db, request.IsEnabled ? "AccountEnabled" : "AccountDisabled", account, principal);
     account.IsEnabled = request.IsEnabled;
     await db.SaveChangesAsync(ct);
     await transaction.CommitAsync(ct);
@@ -239,8 +243,12 @@ tenants.MapPost("/", async (TenantRequest request, ClaimsPrincipal user, Webhook
     var error = ValidateTenant(request);
     if (error is not null) return error;
     var tenant = new Tenant { CreatedByUserId = GetUserId(user), UpdatedByUserId = GetUserId(user), Name = request.Name.Trim(), IsEnabled = request.IsEnabled };
+    await using var transaction = await db.Database.BeginTransactionAsync(ct);
     db.Tenants.Add(tenant);
     await db.SaveChangesAsync(ct);
+    RouteActivityAudit.Add(db, "Created", tenant, user, new { after = RouteActivityAudit.State(tenant) });
+    await db.SaveChangesAsync(ct);
+    await transaction.CommitAsync(ct);
     await db.Entry(tenant).Reference(x => x.CreatedByUser).LoadAsync(ct);
     await db.Entry(tenant).Reference(x => x.UpdatedByUser).LoadAsync(ct);
     return Results.Created($"/api/tenants/{tenant.Id}", ToResponse(tenant, 0));
@@ -253,10 +261,17 @@ tenants.MapPut("/{tenantId:guid}", async (Guid tenantId, TenantRequest request, 
     var userId = GetUserId(user);
     var tenant = await db.Tenants.SingleOrDefaultAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct);
     if (tenant is null) return Results.NotFound();
+    var before = RouteActivityAudit.State(tenant);
+    var wasEnabled = tenant.IsEnabled;
+    var nameChanged = tenant.Name != request.Name.Trim();
     tenant.Name = request.Name.Trim();
     tenant.IsEnabled = request.IsEnabled;
     tenant.UpdatedByUserId = userId;
     tenant.UpdatedAt = DateTimeOffset.UtcNow;
+    if (nameChanged)
+        RouteActivityAudit.Add(db, "Updated", tenant, user, new { before, after = RouteActivityAudit.State(tenant) });
+    if (wasEnabled != tenant.IsEnabled)
+        RouteActivityAudit.Add(db, tenant.IsEnabled ? "Enabled" : "Disabled", tenant, user, new { before, after = RouteActivityAudit.State(tenant) });
     await db.SaveChangesAsync(ct);
     await db.Entry(tenant).Reference(x => x.CreatedByUser).LoadAsync(ct);
     await db.Entry(tenant).Reference(x => x.UpdatedByUser).LoadAsync(ct);
@@ -268,6 +283,9 @@ tenants.MapPatch("/{tenantId:guid}/enabled", async (Guid tenantId, EnabledReques
     var userId = GetUserId(user);
     var tenant = await db.Tenants.SingleOrDefaultAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct);
     if (tenant is null) return Results.NotFound();
+    if (tenant.IsEnabled == request.IsEnabled) return Results.NoContent();
+    RouteActivityAudit.Add(db, request.IsEnabled ? "Enabled" : "Disabled", tenant, user,
+        new { before = tenant.IsEnabled, after = request.IsEnabled });
     tenant.IsEnabled = request.IsEnabled;
     tenant.UpdatedAt = DateTimeOffset.UtcNow;
     tenant.UpdatedByUserId = userId;
@@ -278,10 +296,16 @@ tenants.MapPatch("/{tenantId:guid}/enabled", async (Guid tenantId, EnabledReques
 tenants.MapDelete("/{tenantId:guid}", async (Guid tenantId, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
     var userId = GetUserId(user);
+    await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
     var tenant = await db.Tenants.SingleOrDefaultAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct);
     if (tenant is null) return Results.NotFound();
+    var deletedTopics = await db.Topics.Where(x => x.TenantId == tenantId).ToListAsync(ct);
+    foreach (var deletedTopic in deletedTopics)
+        RouteActivityAudit.Add(db, "Deleted", deletedTopic, user, new { reason = "TenantDeleted", before = RouteActivityAudit.State(deletedTopic) });
+    RouteActivityAudit.Add(db, "Deleted", tenant, user, new { before = RouteActivityAudit.State(tenant), deletedTopicCount = deletedTopics.Count });
     db.Tenants.Remove(tenant);
     await db.SaveChangesAsync(ct);
+    await transaction.CommitAsync(ct);
     return Results.NoContent();
 });
 
@@ -316,8 +340,12 @@ tenants.MapPost("/{tenantId:guid}/topics", async (Guid tenantId, TopicRequest re
         ServiceBusEntityType = NormalizeServiceBusEntityType(request.ServiceBusEntityType),
         ServiceBusEntityName = request.ServiceBusEntityName.Trim()
     };
+    await using var transaction = await db.Database.BeginTransactionAsync(ct);
     db.Topics.Add(topic);
     await db.SaveChangesAsync(ct);
+    RouteActivityAudit.Add(db, "Created", topic, user, new { after = RouteActivityAudit.State(topic) });
+    await db.SaveChangesAsync(ct);
+    await transaction.CommitAsync(ct);
     await db.Entry(topic).Reference(x => x.CreatedByUser).LoadAsync(ct);
     await db.Entry(topic).Reference(x => x.UpdatedByUser).LoadAsync(ct);
     return Results.Created($"/api/tenants/{tenantId}/topics/{topic.Id}", ToTopicResponse(topic));
@@ -334,6 +362,9 @@ tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, G
     if (await db.Topics.AnyAsync(x => x.TenantId == tenantId && x.Id != topicId && x.Key == key, ct))
         return Results.Conflict(new { error = "A topic with this key already exists in the tenant." });
 
+    var before = RouteActivityAudit.State(topic);
+    var wasEnabled = topic.IsEnabled;
+    var previousConnectionString = topic.ServiceBusConnectionString;
     topic.Key = key;
     topic.UpdatedByUserId = userId;
     topic.Name = request.Name.Trim();
@@ -346,6 +377,12 @@ tenants.MapPut("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId, G
     if (request.UseManagedIdentity) topic.ServiceBusConnectionString = null;
     else if (!string.IsNullOrWhiteSpace(request.ServiceBusConnectionString)) topic.ServiceBusConnectionString = request.ServiceBusConnectionString.Trim();
     topic.UpdatedAt = DateTimeOffset.UtcNow;
+    var connectionStringChanged = previousConnectionString != topic.ServiceBusConnectionString;
+    var after = RouteActivityAudit.State(topic);
+    if (!before.Equals(after) || connectionStringChanged)
+        RouteActivityAudit.Add(db, "Updated", topic, user, new { before, after, connectionStringChanged });
+    if (wasEnabled != topic.IsEnabled)
+        RouteActivityAudit.Add(db, topic.IsEnabled ? "Enabled" : "Disabled", topic, user, new { before = wasEnabled, after = topic.IsEnabled });
     await db.SaveChangesAsync(ct);
     await db.Entry(topic).Reference(x => x.CreatedByUser).LoadAsync(ct);
     await db.Entry(topic).Reference(x => x.UpdatedByUser).LoadAsync(ct);
@@ -357,6 +394,9 @@ tenants.MapPatch("/{tenantId:guid}/topics/{topicId:guid}/enabled", async (Guid t
     var userId = GetUserId(user);
     var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId && x.Tenant.CreatedByUserId == userId, ct);
     if (topic is null) return Results.NotFound();
+    if (topic.IsEnabled == request.IsEnabled) return Results.NoContent();
+    RouteActivityAudit.Add(db, request.IsEnabled ? "Enabled" : "Disabled", topic, user,
+        new { before = topic.IsEnabled, after = request.IsEnabled });
     topic.IsEnabled = request.IsEnabled;
     topic.UpdatedAt = DateTimeOffset.UtcNow;
     topic.UpdatedByUserId = userId;
@@ -369,6 +409,7 @@ tenants.MapDelete("/{tenantId:guid}/topics/{topicId:guid}", async (Guid tenantId
     var userId = GetUserId(user);
     var topic = await db.Topics.SingleOrDefaultAsync(x => x.Id == topicId && x.TenantId == tenantId && x.Tenant.CreatedByUserId == userId, ct);
     if (topic is null) return Results.NotFound();
+    RouteActivityAudit.Add(db, "Deleted", topic, user, new { before = RouteActivityAudit.State(topic) });
     db.Topics.Remove(topic);
     await db.SaveChangesAsync(ct);
     return Results.NoContent();

@@ -108,6 +108,7 @@ public static class MicrosoftAuthentication
             };
             if (!(await manager.CreateAsync(user)).Succeeded) return Results.BadRequest(new { error = "Unable to create the application account." });
         }
+        context.Items[ActivityAudit.TargetKey] = user;
         if (!user.IsEnabled) return Results.Unauthorized();
         var logins = await manager.GetLoginsAsync(user);
         if (logins.Any(login => login.LoginProvider == "Microsoft" && login.ProviderKey != key))

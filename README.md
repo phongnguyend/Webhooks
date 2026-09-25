@@ -105,6 +105,36 @@ Remove-Item Env:BOOTSTRAP_GLOBAL_ADMIN_EMAIL
 
 The role assignment persists in SQL. Never commit the administrator email to configuration files. Refresh the UI after assigning the role. Migrations preserve existing users and enable them by default.
 
+## Activity audit log
+
+Global Admins can view **Activity log**, or choose **View activities** for a user. Searchable Category and Event filters group events into Authentication, Users, Tenants, and Topics. Changing the category clears the selected event. Times are displayed in the browser's local timezone.
+
+Captured events include:
+
+- Password, Google, and Microsoft login successes and rejected API login/exchange requests, including rate-limited requests.
+- New password lockouts, password changes/resets, account enabled/disabled, and password-authentication permission changes.
+- Tenant and topic creation, updates, enable/disable transitions, and deletion. Deleting a tenant also records each cascaded topic deletion with reason `TenantDeleted` and the tenant's deleted topic count. Unchanged updates/status requests do not add events.
+
+Global Admins can query `GET /api/activity-logs` with these optional filters:
+
+- `category`: `Authentication`, `Users`, `Tenants`, or `Topics`.
+- `eventType`: a specific event, such as `LoginSucceeded` or `TenantCreated`.
+- `entityType` and `entityId`: exact entity filters; use both to avoid collisions across entity types.
+- `userId`: events targeting that User entity or performed by that user.
+- `search`: entity name/ID or acting username/user ID.
+- `page` and `pageSize`: default to 1 and 25; maximum page size is 100.
+- `from` and `to`: optional inclusive timestamp bounds on event time, using ISO 8601 timestamps with `Z` or an explicit UTC offset. Either bound can be omitted. Reversed ranges return HTTP 400. The UI accepts local dates/times (including seconds), converts them to UTC when Search is clicked, and provides Clear dates to remove both bounds.
+
+Filters combine before pagination. Unknown categories or event types return HTTP 400. There are no API update/delete operations for audit records.
+
+`ActivityLogs` stores database-generated GUID IDs (`NEWSEQUENTIALID()`) and UTC timestamps. `EntityType`, `EntityId`, and `EntityName` identify the affected entity; `ActorUserId` and `ActorUsername` identify who performed the action. Names are historical snapshots, and audit references have no cascading foreign keys, so deleting an entity does not erase its history. Failed unauthenticated requests have no actor; unknown accounts and invalid provider tokens are not attributed to an unverified user.
+
+`Metadata` is a C# string containing serialized JSON, returned as a string by the API and stored as `nvarchar(max)` with an `ISJSON` constraint. It defaults to `"{}"`; the UI displays expandable JSON. Topic metadata includes the tenant ID, and route changes include safe before/after snapshots. Service Bus connection strings are never included; credential changes record only a boolean. Never serialize whole requests or entities into metadata. Passwords, hashes, security stamps, tokens, request bodies, raw exceptions, and external provider subject IDs must not be logged. Reasons use fixed internal codes.
+
+Account/password and route audit records are transactional with their changes, including route creation after database-generated IDs are assigned. Login audit records are persisted before response headers; persistence failure prevents token delivery. Database availability is therefore required for login. Attempts on already locked accounts are login failures, not new lockout transitions. Ordinary API calls, existing sessions, Microsoft account linking, and provider-side cancellations/failures that never reach the API are not login events.
+
+Normal startup applies the `AddActivityLogs` migration. Rolling it back drops the audit table and its records. Earlier events cannot be backfilled. There is no automatic retention purge; database administrators should define retention, access controls, backups, and tamper protection. This table alone is not an immutable compliance archive.
+
 ## Production configuration
 
 See [infra/README.md](infra/README.md) for Azure infrastructure, dev/test parameters, deployment setup, and the frontend/backend CI workflows.

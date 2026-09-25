@@ -1,14 +1,10 @@
 import './record-timestamps.css'
-
-const formatter = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric', month: 'short', day: 'numeric',
-  hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short',
-})
+import { formatDateTime } from '../utils/dateTime'
 
 function Timestamp({ value }) {
   const date = value ? new Date(value) : null
   if (!date || Number.isNaN(date.getTime())) return <span>Not available</span>
-  return <time dateTime={date.toISOString()} title={date.toISOString()}>{formatter.format(date)}</time>
+  return <time dateTime={date.toISOString()} title={date.toISOString()}>{formatDateTime(value)}</time>
 }
 
 function AuditUser({ user }) {

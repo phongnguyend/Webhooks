@@ -30,6 +30,7 @@ public static class UserAdministration
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         var account = id.HasValue ? await manager.FindByIdAsync(id.Value.ToString()) : new AppUser();
         if (account is null) return Results.NotFound();
+        var wasEnabled = account.IsEnabled;
         var existingRoles = id.HasValue ? await manager.GetRolesAsync(account) : [];
         var currentUserId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
         if (id?.ToString() == currentUserId && (!request.IsEnabled || !roles.Contains(AppRoles.GlobalAdmin)))
@@ -75,6 +76,12 @@ public static class UserAdministration
             result = await manager.AddToRolesAsync(account, added);
             if (!result.Succeeded) return Failure(result);
         }
+        if (!id.HasValue || wasEnabled != account.IsEnabled)
+        {
+            ActivityAudit.Add(db, account.IsEnabled ? "AccountEnabled" : "AccountDisabled", account, principal,
+                metadata: new { reason = id.HasValue ? "Administrator" : "AccountCreated" });
+            await db.SaveChangesAsync(ct);
+        }
         await transaction.CommitAsync(ct);
         return id.HasValue ? Results.NoContent() : Results.Created($"/api/users/{account.Id}", new { account.Id });
     }
@@ -114,6 +121,10 @@ public static class UserAdministration
             result = await manager.UpdateSecurityStampAsync(account);
             if (!result.Succeeded) return Failure(result);
         }
+        if (hasNewPassword) ActivityAudit.Add(db, "PasswordChanged", account, principal, new { reason = "Administrator" });
+        if (passwordAuthenticationChanged)
+            ActivityAudit.Add(db, account.AllowPasswordAuthentication ? "PasswordAuthenticationEnabled" : "PasswordAuthenticationDisabled", account, principal);
+        await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         return Results.NoContent();
     }

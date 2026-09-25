@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Identity;
 using WebhookRouter.Models;
+using WebhookRouter.Data;
 
 namespace WebhookRouter.Services;
 
@@ -15,17 +16,28 @@ public static class PasswordAuthentication
                 || string.IsNullOrEmpty(request.Password) || request.Password.Length > 1024)
                 return InvalidCredentials();
             var user = await manager.FindByNameAsync(request.Username.Trim());
-            if (user is null || !user.IsEnabled || !user.AllowPasswordAuthentication) return InvalidCredentials();
+            context.Items[ActivityAudit.TargetKey] = user;
+            if (user is null || !user.IsEnabled || !user.AllowPasswordAuthentication)
+            {
+                context.Items[ActivityAudit.ReasonKey] = user is null ? "UnknownAccount" : !user.IsEnabled ? "AccountDisabled" : "PasswordAuthenticationDisabled";
+                return InvalidCredentials();
+            }
             // No second-factor flow here: never bypass MFA when issuing a JWT.
-            if (await manager.GetTwoFactorEnabledAsync(user)) return InvalidCredentials();
+            if (await manager.GetTwoFactorEnabledAsync(user)) { context.Items[ActivityAudit.ReasonKey] = "MfaRequired"; return InvalidCredentials(); }
+            var wasLocked = await manager.IsLockedOutAsync(user);
             var result = await signIn.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
-            if (!result.Succeeded) return InvalidCredentials();
+            if (!result.Succeeded)
+            {
+                context.Items[ActivityAudit.LockedKey] = !wasLocked && result.IsLockedOut;
+                context.Items[ActivityAudit.ReasonKey] = result.IsLockedOut ? "AccountLockedOut" : "InvalidCredentials";
+                return InvalidCredentials();
+            }
             // Checks credentials/lockout/confirmation without issuing a cookie.
             return Results.Ok(sessions.Issue(user, await manager.GetRolesAsync(user)));
         }).AllowAnonymous().RequireRateLimiting("password-auth");
 
         app.MapPut("/api/auth/me/password", async (SetPasswordRequest request, HttpContext context,
-            UserManager<AppUser> manager, SignInManager<AppUser> signIn) =>
+            UserManager<AppUser> manager, SignInManager<AppUser> signIn, WebhookDbContext db) =>
         {
             NoCache(context);
             var user = await manager.GetUserAsync(context.User);
@@ -38,11 +50,29 @@ public static class PasswordAuthentication
             {
                 if (string.IsNullOrEmpty(request.CurrentPassword) || request.CurrentPassword.Length > 1024)
                     return InvalidCredentials();
+                var wasLocked = await manager.IsLockedOutAsync(user);
                 var check = await signIn.CheckPasswordSignInAsync(user, request.CurrentPassword, lockoutOnFailure: true);
-                if (!check.Succeeded) return InvalidCredentials();
-                result = await manager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+                if (!check.Succeeded)
+                {
+                    ActivityAudit.Add(db, "LoginFailed", user, context.User, new { provider = "Password", reason = "CurrentPasswordRejected" });
+                    if (!wasLocked && check.IsLockedOut) ActivityAudit.Add(db, "UserLockedOut", user, context.User, new { provider = "Password", reason = "FailedPasswordAttempts" });
+                    await db.SaveChangesAsync();
+                    return InvalidCredentials();
+                }
+            }
+            // Password mutation and its audit record commit together.
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            if (await manager.HasPasswordAsync(user))
+            {
+                result = await manager.ChangePasswordAsync(user, request.CurrentPassword!, request.NewPassword);
             }
             else result = await manager.AddPasswordAsync(user, request.NewPassword);
+            if (result.Succeeded)
+            {
+                ActivityAudit.Add(db, "PasswordChanged", user, context.User, new { reason = "SelfService" });
+                await db.SaveChangesAsync();
+                await transaction.CommitAsync();
+            }
             // Identity rotates the security stamp, invalidating existing JWTs.
             return result.Succeeded ? Results.NoContent()
                 : Results.BadRequest(new { error = string.Join(" ", result.Errors.Select(x => x.Description)) });

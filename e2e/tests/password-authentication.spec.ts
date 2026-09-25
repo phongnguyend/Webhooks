@@ -38,6 +38,10 @@ test('Global Admin controls password authentication and resets the test user pas
     expect(saved).toMatchObject({ allowPasswordAuthentication: true, hasPassword: true });
     expect(saved.password).toBeUndefined();
     expect(saved.passwordHash).toBeUndefined();
+    const audit = await (await admin.get('/api/activity-logs', { params: { search: user.id } })).json();
+    for (const eventType of ['PasswordChanged', 'PasswordAuthenticationEnabled', 'PasswordAuthenticationDisabled']) {
+      expect(audit.items.some((entry: { eventType: string; entityId: string }) => entry.eventType === eventType && entry.entityId === user.id)).toBe(true);
+    }
   } finally {
     try {
       if (user) expect((await admin.put(`/api/users/${user.id}/password-authentication`, { data: { allowPasswordAuthentication: user.allowPasswordAuthentication, password } })).status()).toBe(204);

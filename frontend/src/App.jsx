@@ -5,6 +5,7 @@ import ConfigurationPage from './pages/ConfigurationPage'
 import useConfirmation from './components/useConfirmation'
 import EventsPage from './pages/EventsPage'
 import UsersPage from './pages/UsersPage'
+import ActivityLogPage from './pages/ActivityLogPage'
 import AppHeader from './components/AppHeader'
 import ProfileDialog from './components/ProfileDialog'
 import TenantDialog from './components/TenantDialog'
@@ -59,6 +60,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true)
   const [loginError, setLoginError] = useState('')
   const [view, setView] = useState('manage')
+  const [activityUser, setActivityUser] = useState(null)
   const [events, setEvents] = useState([])
   const [selectedEventId, setSelectedEventId] = useState(null)
   const [connectionStatus, setConnectionStatus] = useState('connecting')
@@ -302,11 +304,11 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <AppHeader view={view} onViewChange={setView} eventCount={events.length} user={user} displayName={userDisplayName} connectionStatus={connectionStatus} onProfile={() => setDialog({ type: 'profile' })} onSignOut={logout} />
+      <AppHeader view={view} onViewChange={(nextView) => { setActivityUser(null); setView(nextView) }} eventCount={events.length} user={user} displayName={userDisplayName} connectionStatus={connectionStatus} onProfile={() => setDialog({ type: 'profile' })} onSignOut={logout} />
 
       {notice && <div className={`toast ${notice.kind}`}><span>{notice.text}</span><button onClick={() => setNotice(null)} aria-label="Dismiss"><X size={15} /></button></div>}
 
-      {view === 'users' && user.roles?.includes('Global Admin') ? <UsersPage api={api} currentUser={user} /> : view === 'manage' ? (
+      {view === 'activity' && user.roles?.includes('Global Admin') ? <ActivityLogPage key={activityUser?.id || 'all'} api={api} initialUser={activityUser} /> : view === 'users' && user.roles?.includes('Global Admin') ? <UsersPage api={api} currentUser={user} onViewActivities={(selectedUser) => { setActivityUser(selectedUser); setView('activity') }} /> : view === 'manage' ? (
         <ConfigurationPage currentUser={user} tenants={tenants} selectedTenantId={selectedTenantId} setSelectedTenantId={setSelectedTenantId} selectedTenant={selectedTenant} topics={topics} loading={loading} copied={copied} copy={copy} setDialog={setDialog} toggleTenant={toggleTenant} deleteTenant={deleteTenant} toggleTopic={toggleTopic} deleteTopic={deleteTopic} />
       ) : (
         <EventsPage events={events} filteredEvents={filteredEvents} selectedEvent={selectedEvent} selectedEventId={selectedEventId} setSelectedEventId={setSelectedEventId} query={query} setQuery={setQuery} formattedPayload={formattedPayload} copied={copied} copy={copy} status={connectionStatus} />

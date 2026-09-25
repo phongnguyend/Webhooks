@@ -68,6 +68,7 @@ public static class GoogleAuthentication
                         if (!createResult.Succeeded) { context.Fail("Unable to create the application user."); return; }
                     }
     
+                    context.HttpContext.Items[ActivityAudit.TargetKey] = user;
                     if (!user.IsEnabled)
                     {
                         context.Fail("This account is disabled.");

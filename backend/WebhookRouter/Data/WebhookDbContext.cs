@@ -9,10 +9,26 @@ public sealed class WebhookDbContext(DbContextOptions<WebhookDbContext> options)
 {
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<Topic> Topics => Set<Topic>();
+    public DbSet<ActivityLog> ActivityLogs => Set<ActivityLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<ActivityLog>(entity =>
+        {
+            entity.Property(x => x.Id).HasDefaultValueSql("NEWSEQUENTIALID()");
+            entity.Property(x => x.EventType).HasMaxLength(64);
+            entity.Property(x => x.ActorUsername).HasMaxLength(256);
+            entity.Property(x => x.EntityType).HasMaxLength(64);
+            entity.Property(x => x.EntityId).HasMaxLength(128);
+            entity.Property(x => x.EntityName).HasMaxLength(256);
+            entity.Property(x => x.Metadata)
+                .HasColumnType("nvarchar(max)").HasDefaultValueSql("N'{}'");
+            entity.ToTable("ActivityLogs", table => table.HasCheckConstraint("CK_ActivityLogs_Metadata_Json", "ISJSON([Metadata]) = 1"));
+            entity.HasIndex(x => new { x.OccurredAt, x.Id });
+            entity.HasIndex(x => new { x.EntityType, x.EntityId, x.OccurredAt });
+            // Snapshot IDs/names, no cascading FK: account removal must not erase history.
+        });
 
         modelBuilder.Entity<AppUser>(entity =>
         {
