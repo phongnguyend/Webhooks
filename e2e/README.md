@@ -8,6 +8,21 @@ Playwright + TypeScript against a running frontend and real API/database. Tests 
 2. Preconfigure two enabled Identity accounts with password authentication enabled, passwords and without MFA: one with only `User`, one with `Global Admin`. The password-management test temporarily disables the dedicated regular user’s password authentication, then restores it and resets its password to the configured test password. Roles are unchanged. See password setup below.
 3. Copy `.env.example` to `.env` in this folder. Configure `E2E_USER_USERNAME`, `E2E_USER_PASSWORD`, `E2E_ADMIN_USERNAME`, and `E2E_ADMIN_PASSWORD`. Environment variables override `.env`. Never commit credentials.
 
+## Manual GitHub Actions run
+
+Use **Actions → E2E tests → Run workflow** and select `dev` or `test` and the branch containing the tests. The workflow must exist on the default branch to appear in Actions. It tests the already deployed applications; it does not deploy code or run database migrations.
+
+Configure each GitHub environment with the same `FRONTEND_URL` and `API_URL` variables as the release workflow (HTTPS origins without trailing slashes), plus these secrets:
+
+- `E2E_USER_USERNAME`
+- `E2E_USER_PASSWORD`
+- `E2E_ADMIN_USERNAME`
+- `E2E_ADMIN_PASSWORD`
+
+Enter passwords literally in GitHub Secrets, without the surrounding quotes used in `.env` files. Use dedicated, distinct test accounts with the roles and password settings described above. No Azure login credentials or JWT signing key are needed.
+
+The workflow installs Chromium, checks both applications, and runs tests sequentially with no retries, stopping on the first failure to limit repeated failed logins. Results appear in workflow logs; authenticated artifacts are not uploaded. It shares the release workflow's per-environment concurrency group to prevent overlapping deployments/tests. GitHub can replace an older pending run when another run queues in that group. Restrict allowed branches and configure environment approvals because tests receive account credentials and modify test data. Do not run local tests concurrently against these same accounts.
+
 ## Password setup
 
 As Global Admin, create the user first, then open **Users → Password authentication**, select **Enable password authentication**, enter an initial/new password and save. An initial password is required if none exists; leave the field blank to retain an existing password. Passwords require at least 12 characters including uppercase, lowercase, a digit and a symbol.

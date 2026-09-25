@@ -1,0 +1,111 @@
+name: E2E tests
+run-name: E2E ${{ github.ref_name }} against ${{ inputs.environment }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployed environment to test
+        type: choice
+        required: true
+        default: dev
+        options: [dev, test]
+
+permissions:
+  contents: read
+
+# Share the release lock so deployments cannot interrupt tests or their cleanup.
+concurrency:
+  group: release-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ vars.FRONTEND_URL }}
+    defaults:
+      run:
+        working-directory: e2e
+        shell: bash
+    env:
+      E2E_BASE_URL: ${{ vars.FRONTEND_URL }}
+      E2E_API_URL: ${{ vars.API_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate E2E configuration
+        env:
+          E2E_USER_USERNAME: ${{ secrets.E2E_USER_USERNAME }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_ADMIN_USERNAME: ${{ secrets.E2E_ADMIN_USERNAME }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in E2E_BASE_URL E2E_API_URL E2E_USER_USERNAME E2E_USER_PASSWORD E2E_ADMIN_USERNAME E2E_ADMIN_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing environment setting: $name"
+              exit 1
+            fi
+          done
+          for name in E2E_BASE_URL E2E_API_URL; do
+            if [[ ! "${!name}" =~ ^https://[^/]+$ ]]; then
+              echo "::error::$name must be an HTTPS origin without a trailing slash or path."
+              exit 1
+            fi
+          done
+          if [[ "$GITHUB_REF_TYPE" != branch ]]; then
+            echo '::error::Select a branch when running this workflow.'
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check TypeScript
+        run: npm run typecheck
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Check deployed applications
+        run: |
+          set -euo pipefail
+          for url in "${E2E_API_URL}/healthz" "$E2E_BASE_URL"; do
+            curl --fail --silent --show-error --output /dev/null \
+              --retry 3 --retry-all-errors --retry-delay 5 \
+              --connect-timeout 10 --max-time 20 "$url"
+          done
+
+      - name: Run Playwright tests
+        env:
+          E2E_USER_USERNAME: ${{ secrets.E2E_USER_USERNAME }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          E2E_ADMIN_USERNAME: ${{ secrets.E2E_ADMIN_USERNAME }}
+          E2E_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+        # Fail fast to avoid repeatedly attempting login with bad credentials.
+        # Keep traces/video/screenshots off; do not upload authenticated artifacts.
+        run: npm test -- --project=chromium --workers=1 --retries=0 --max-failures=1
+
+      - name: E2E summary
+        if: always()
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          TEST_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### E2E: $TARGET_ENVIRONMENT"
+            echo "Status: $TEST_STATUS"
+            echo "Test commit: $GITHUB_SHA"
+            echo "Frontend: $E2E_BASE_URL"
+            echo "API: $E2E_API_URL"
+            echo 'Results are in the Run Playwright tests log. No application deployment was performed.'
+          } >> "$GITHUB_STEP_SUMMARY"
