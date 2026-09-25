@@ -9,7 +9,7 @@ An ASP.NET Core and React application for managing tenant-specific webhook route
 - Map every route to any Azure Service Bus namespace and topic or queue.
 - Select managed identity or connection-string authentication per topic route.
 - Persist configuration with EF Core and SQL Server.
-- Sign in with Google, exchange its ID token for an application JWT, and use the application JWT for API and SignalR access.
+- Sign in with Google or configured Microsoft accounts, exchange the provider ID token for an application JWT, and use the application JWT for API and SignalR access.
 - Isolate tenants, configuration, event history, and live events by application user.
 
 ## Local setup
@@ -61,6 +61,28 @@ npm run dev
 ```
 
 Open `http://localhost:5173`. EF Core applies database migrations when the API starts.
+
+## Microsoft sign-in
+
+Microsoft sign-in is optional and uses MSAL's authorization-code flow with PKCE. Configure a Microsoft Entra **app registration** for the specific directory you trust (work/school accounts in that directory, including permitted guests). This version does not accept arbitrary `common`/`organizations` tenants. Your administrator must provide the registration if you cannot create one; the GitHub deployment managed identity is not a login app registration.
+
+In the registration, add the **Single-page application** platform with `http://localhost:5173/` and your exact deployed frontend URL including `/`. Do not enable implicit grants or create a client secret for the SPA. Configure the optional `email` ID-token claim under Token configuration so new accounts can be created. Missing email is rejected for new accounts rather than treating `preferred_username` as a verified email.
+
+Set matching environment values (do not commit real identifiers):
+
+```text
+Authentication__Microsoft__ClientId=<app-registration-client-id>
+Authentication__Microsoft__TenantId=<directory-tenant-guid>
+VITE_MICROSOFT_CLIENT_ID=<same-client-id>
+VITE_MICROSOFT_TENANT_ID=<same-tenant-guid>
+VITE_MICROSOFT_REDIRECT_URI=http://localhost:5173/
+```
+
+The Microsoft button appears when both frontend IDs are configured. The backend exposes `POST /api/auth/exchange/microsoft` only when both backend IDs are configured; it validates Microsoft's signature, exact tenant issuer, audience, lifetime, and user ID-token claims before issuing the same internal JWT used after Google login. Microsoft identities are keyed by `tid` + `oid` in Identity `UserLogins`, while application ownership still uses the database user ID. Microsoft roles never grant application roles; new accounts receive User.
+
+Microsoft emails are not used to merge accounts or inherit preconfigured permissions. If the email already exists, sign in using the existing provider and choose **Profile → Connect Microsoft account**. Linking requires both a valid application JWT and a validated Microsoft ID token (`POST /api/auth/link/microsoft`, with the latter in `X-Microsoft-Id-Token`). It preserves the existing profile, email, user ID, tenants, and roles, and rejects identities already attached elsewhere. A precreated account must first be accessed through its existing supported sign-in method before connecting Microsoft; admin binding by Microsoft object ID is not implemented.
+
+MSAL handles state, nonce, and PKCE; only the application JWT is used for API/SignalR access. MSAL's temporary provider cache is cleared after exchange. Both flows use full-page redirects (no popup/iframe bridge is needed). App sign-out does not sign out the Microsoft browser SSO session; the next login shows the account picker. Google sign-in also refuses to merge an already-linked Microsoft-only account by email; connecting Google to Microsoft-first accounts is not yet implemented.
 
 ## User administration
 

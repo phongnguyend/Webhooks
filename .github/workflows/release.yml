@@ -33,6 +33,9 @@ jobs:
       VITE_API_URL: ${{ vars.API_URL }}
       VITE_GOOGLE_REDIRECT_URI: ${{ vars.FRONTEND_URL }}/
       VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      VITE_MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
+      VITE_MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID }}
+      VITE_MICROSOFT_REDIRECT_URI: ${{ vars.FRONTEND_URL }}/
     steps:
       - uses: actions/checkout@v4
 
@@ -46,6 +49,10 @@ jobs:
           FRONTEND_URL: ${{ vars.FRONTEND_URL }}
         run: |
           set -euo pipefail
+          if [[ -n "$VITE_MICROSOFT_CLIENT_ID" && -z "$VITE_MICROSOFT_TENANT_ID" ]] || [[ -z "$VITE_MICROSOFT_CLIENT_ID" && -n "$VITE_MICROSOFT_TENANT_ID" ]]; then
+            echo '::error::Configure both MICROSOFT_CLIENT_ID and MICROSOFT_TENANT_ID, or leave both unset.'
+            exit 1
+          fi
           for name in AZURE_WEBAPP_NAME VITE_API_URL VITE_GOOGLE_CLIENT_ID AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID SWA_TOKEN FRONTEND_URL; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Missing environment setting: $name"

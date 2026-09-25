@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@azure/msal-browser": "^5.23.0",
     "@microsoft/signalr": "latest",
     "lucide-react": "latest",
     "react": "latest",

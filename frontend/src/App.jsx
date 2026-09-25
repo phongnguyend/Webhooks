@@ -11,12 +11,10 @@ import TopicDialog from './components/TopicDialog'
 import TestPayloadDialog from './components/TestPayloadDialog'
 import { X } from 'lucide-react'
 import { API_URL } from './config'
+import { microsoftEnabled, cancelPendingMicrosoftSignIn, startMicrosoftSignIn, completeMicrosoftSignIn } from './services/microsoftAuth'
+import { startGoogleSignIn, completeGoogleSignIn } from './services/googleAuth'
+import { decodeJwtPayload } from './utils/jwt'
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
-const GOOGLE_REDIRECT_URI = import.meta.env.VITE_GOOGLE_REDIRECT_URI
-  || (typeof window === 'undefined' ? '' : `${window.location.origin}${window.location.pathname}`)
-const GOOGLE_STATE_KEY = 'webhook-router-google-state'
-const GOOGLE_NONCE_KEY = 'webhook-router-google-nonce'
 const TOKEN_KEY = 'webhook-router-access-token'
 
 async function api(path, options) {
@@ -36,65 +34,12 @@ async function api(path, options) {
   return response.status === 204 ? null : response.json()
 }
 
-function randomUrlToken() {
-  const bytes = new Uint8Array(32)
-  crypto.getRandomValues(bytes)
-  return btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
-}
-
-function decodeJwtPayload(token) {
-  const encoded = token.split('.')[1]?.replaceAll('-', '+').replaceAll('_', '/')
-  if (!encoded) throw new Error('Google returned an invalid ID token.')
-  const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=')
-  const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0))
-  return JSON.parse(new TextDecoder().decode(bytes))
-}
-
-function consumeGoogleRedirect() {
-  if (typeof window === 'undefined' || !window.location.hash) return { token: null, error: '' }
-  const response = new URLSearchParams(window.location.hash.slice(1))
-  const token = response.get('id_token')
-  const oauthError = response.get('error')
-  if (!token && !oauthError) return { token: null, error: '' }
-
-  window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`)
-  const expectedState = sessionStorage.getItem(GOOGLE_STATE_KEY)
-  const expectedNonce = sessionStorage.getItem(GOOGLE_NONCE_KEY)
-  sessionStorage.removeItem(GOOGLE_STATE_KEY)
-  sessionStorage.removeItem(GOOGLE_NONCE_KEY)
-
-  if (oauthError) return { token: null, error: response.get('error_description') || 'Google sign-in was cancelled.' }
-  if (!expectedState || response.get('state') !== expectedState) return { token: null, error: 'Google sign-in state validation failed.' }
-
-  try {
-    if (!expectedNonce || decodeJwtPayload(token).nonce !== expectedNonce)
-      return { token: null, error: 'Google sign-in nonce validation failed.' }
-    return { token, error: '' }
-  } catch (error) {
-    return { token: null, error: error.message || 'Google returned an invalid ID token.' }
-  }
-}
-
-const googleRedirect = consumeGoogleRedirect()
-
 // One exchange per redirect, including React StrictMode's repeated effect setup.
 const initialSession = (async () => {
   sessionStorage.removeItem('webhook-router-token') // Discard legacy Google bearer sessions.
-  if (googleRedirect.error) { sessionStorage.removeItem(TOKEN_KEY); return { token: null, error: googleRedirect.error } }
-  if (!googleRedirect.token) return { token: sessionStorage.getItem(TOKEN_KEY), error: '' }
-  const googleToken = googleRedirect.token
-  googleRedirect.token = null
-  sessionStorage.removeItem(TOKEN_KEY)
-  try {
-    const response = await fetch(`${API_URL}/api/auth/exchange/google`, {
-      method: 'POST', headers: { Authorization: `Bearer ${googleToken}` },
-    })
-    if (!response.ok) throw new Error('Unable to sign in. Your account may be disabled or the Google sign-in expired.')
-    const session = await response.json()
-    if (!session.accessToken || session.tokenType !== 'Bearer') throw new Error('Invalid application session response.')
-    sessionStorage.setItem(TOKEN_KEY, session.accessToken)
-    return { token: session.accessToken, error: '' }
-  } catch (error) { return { token: null, error: error.message || 'Unable to sign in.' } }
+  return await completeMicrosoftSignIn(TOKEN_KEY)
+    ?? await completeGoogleSignIn(TOKEN_KEY)
+    ?? { token: sessionStorage.getItem(TOKEN_KEY), error: '' }
 })()
 
 function parsePayload(payload) {
@@ -110,7 +55,7 @@ export default function App() {
   const [initializingSession, setInitializingSession] = useState(true)
   const [user, setUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
-  const [loginError, setLoginError] = useState(googleRedirect.error)
+  const [loginError, setLoginError] = useState('')
   const [view, setView] = useState('manage')
   const [events, setEvents] = useState([])
   const [selectedEventId, setSelectedEventId] = useState(null)
@@ -126,10 +71,12 @@ export default function App() {
 
   useEffect(() => {
     let active = true
-    initialSession.then(({ token, error }) => {
+    initialSession.then(({ token, error, linked }) => {
       if (!active) return
       setAccessToken(token)
       setLoginError(error)
+      if (error && token) setNotice({ kind: 'error', text: error })
+      if (linked) setNotice({ kind: 'success', text: 'Microsoft account connected.' })
       setInitializingSession(false)
     })
     return () => { active = false }
@@ -323,29 +270,17 @@ export default function App() {
     window.setTimeout(() => setCopied(false), 1600)
   }
 
-  function startGoogleRedirect() {
+  function signInGoogle() {
     setLoginError('')
-    if (!GOOGLE_CLIENT_ID) {
-      setLoginError('Set VITE_GOOGLE_CLIENT_ID to enable Google sign-in.')
-      return
-    }
+    cancelPendingMicrosoftSignIn()
+    try { startGoogleSignIn() }
+    catch (error) { setLoginError(error.message) }
+  }
 
-    const state = randomUrlToken()
-    const nonce = randomUrlToken()
-    sessionStorage.setItem(GOOGLE_STATE_KEY, state)
-    sessionStorage.setItem(GOOGLE_NONCE_KEY, nonce)
-    const authorizeUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
-    authorizeUrl.search = new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: GOOGLE_REDIRECT_URI,
-      response_type: 'id_token',
-      response_mode: 'fragment',
-      scope: 'openid email profile',
-      prompt: 'select_account',
-      state,
-      nonce,
-    }).toString()
-    window.location.assign(authorizeUrl)
+  async function signInMicrosoft(link = false) {
+    setLoginError('')
+    try { await startMicrosoftSignIn(link ? user.id : null) }
+    catch (error) { if (link) showError(error); else setLoginError(error.message) }
   }
 
   function logout() {
@@ -359,7 +294,7 @@ export default function App() {
     setEvents([])
   }
 
-  if (authLoading || !user) return <LoginPage loading={authLoading} error={loginError} onSignIn={startGoogleRedirect} />
+  if (authLoading || !user) return <LoginPage loading={authLoading} error={loginError} onSignIn={signInGoogle} onMicrosoftSignIn={() => signInMicrosoft()} microsoftEnabled={microsoftEnabled} />
 
   return (
     <main className="app-shell">
@@ -376,7 +311,7 @@ export default function App() {
       {dialog?.type === 'tenant' && <TenantDialog item={dialog.item} onClose={() => setDialog(null)} onSave={saveTenant} />}
       {dialog?.type === 'topic' && <TopicDialog item={dialog.item} onClose={() => setDialog(null)} onSave={saveTopic} />}
       {dialog?.type === 'test' && <TestPayloadDialog tenantId={selectedTenantId} topic={dialog.item} onClose={() => setDialog(null)} onSend={sendTestPayload} />}
-      {dialog?.type === 'profile' && <ProfileDialog user={user} onClose={() => setDialog(null)} onSave={saveProfile} onSignOut={logout} />}
+      {dialog?.type === 'profile' && <ProfileDialog user={user} onClose={() => setDialog(null)} onSave={saveProfile} onSignOut={logout} onConnectMicrosoft={microsoftEnabled ? () => signInMicrosoft(true) : null} />}
     </main>
   )
 }

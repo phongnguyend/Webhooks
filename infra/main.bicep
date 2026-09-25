@@ -30,6 +30,10 @@ param sqlAdministratorPrincipalType string = 'Group'
 @description('Public Google OAuth web client ID shared by the API and frontend.')
 @minLength(1)
 param googleClientId string
+@description('Optional Microsoft sign-in app registration client ID. Supply with microsoftTenantId using environment overrides.')
+param microsoftClientId string = ''
+@description('Specific Microsoft Entra tenant GUID allowed for sign-in. common/organizations are not accepted.')
+param microsoftTenantId string = ''
 @secure()
 @description('Base64-encoded random JWT signing key (at least 32 decoded bytes). Supply from an environment variable; never store in parameter JSON.')
 @minLength(44)
@@ -171,6 +175,8 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-11-01' = {
   properties: union({
     ASPNETCORE_ENVIRONMENT: 'Production'
     Authentication__Google__ClientId: googleClientId
+    Authentication__Microsoft__ClientId: microsoftClientId
+    Authentication__Microsoft__TenantId: microsoftTenantId
     Authentication__Jwt__SigningKey: jwtSigningKey
     Authentication__Jwt__Issuer: '${namePrefix}-${environment}'
     Authentication__Jwt__Audience: '${namePrefix}-${environment}-api'
@@ -190,5 +196,8 @@ output resourceTags object = tags
 output frontendBuildVariables object = {
   VITE_API_URL: 'https://${api.properties.defaultHostName}'
   VITE_GOOGLE_CLIENT_ID: googleClientId
+  VITE_MICROSOFT_CLIENT_ID: microsoftClientId
+  VITE_MICROSOFT_TENANT_ID: microsoftTenantId
+  VITE_MICROSOFT_REDIRECT_URI: 'https://${frontend.properties.defaultHostname}/'
   VITE_GOOGLE_REDIRECT_URI: 'https://${frontend.properties.defaultHostname}/'
 }

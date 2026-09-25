@@ -20,7 +20,7 @@ export default function UserEditor({ user, currentUser, api, onSaved, onClose })
     <form className="modal" role="dialog" aria-modal="true" aria-labelledby="user-editor-title" onSubmit={submit} onKeyDown={(event) => event.key === 'Escape' && !saving && onClose()}>
       <div className="modal-header"><h2 id="user-editor-title">{user ? 'Edit user' : 'Create user'}</h2><button type="button" className="icon-button" disabled={saving} onClick={onClose} aria-label="Close">×</button></div>
       <div className="modal-body">
-        <p className="user-editor-help">The user signs in with Google using this email. No password or invitation email is sent.</p>
+        <p className="user-editor-help">The user first signs in with Google using this email, then can connect Microsoft from their profile. No password or invitation email is sent.</p>
         <label className="form-field">Email<input autoFocus type="email" required maxLength={256} value={form.email} readOnly={Boolean(user)} disabled={saving} onChange={(event) => field('email', event.target.value)} /></label>
         {user && <p className="user-editor-help">Email cannot be changed after the user is created.</p>}
         <label className="form-field">First name<input maxLength={100} value={form.firstName} disabled={saving} onChange={(event) => field('firstName', event.target.value)} /></label>
