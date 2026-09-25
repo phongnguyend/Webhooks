@@ -91,11 +91,13 @@ Create GitHub environments named `dev` and `test` under repository **Settings â†
 | Secret | `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
 | Secret | `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
 | Secret | `GOOGLE_CLIENT_ID` | Same Google OAuth client ID configured on the API |
-| Secret | `MICROSOFT_CLIENT_ID` | Optional Microsoft sign-in app registration client ID, matching the API |
+| Secret | `MICROSOFT_CLIENT_ID` | Optional Microsoft sign-in app registration client ID, applied to both the frontend and API |
 | Secret | `MICROSOFT_TENANT_ID` | Optional allowed sign-in tenant GUID; set together with Microsoft client ID |
 | Secret | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Deployment token from the target Static Web App's **Manage deployment token** page |
 
 Google's client ID is public in the built frontend, even when supplied as a GitHub secret. Never provide a Google client secret to Vite. The redirect URI is `FRONTEND_URL` plus `/`; register that exact URI with Google and configure the API's CORS origin accordingly.
+
+Before deploying the API, the release workflow sets `Authentication__Microsoft__ClientId` and `Authentication__Microsoft__TenantId` on the App Service using the selected environment's Microsoft secrets. Set both secrets to enable Microsoft sign-in; leaving both unset clears these two settings and disables Microsoft sign-in on both applications. Other App Service settings are preserved. No parameter files are modified.
 
 Configure [Azure OIDC federation](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-azure) for the release identity, trusting this repository's selected GitHub environment (`dev` or `test`), issuer `https://token.actions.githubusercontent.com`, and audience `api://AzureADTokenExchange`. Use the actual subject format for your repository's OIDC configuration; newer repositories can use immutable repository/owner IDs. Create one federated credential per environment. Grant the identity Website Contributor scoped to the target App Service; it does not need SQL access or subscription-wide Contributor. No Azure client secret or App Service publish profile is required.
 

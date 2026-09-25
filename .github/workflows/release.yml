@@ -95,6 +95,24 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Configure API Microsoft authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          resource_group=$(az resource list --name "$AZURE_WEBAPP_NAME" \
+            --resource-type Microsoft.Web/sites --query '[0].resourceGroup' --output tsv)
+          if [[ -z "$resource_group" ]]; then
+            echo '::error::Cannot find the API App Service in the selected subscription.'
+            exit 1
+          fi
+          # Apply empty values too, so disabling Microsoft sign-in also disables it on the API.
+          # Suppress output because appsettings set can return other sensitive settings.
+          az webapp config appsettings set --name "$AZURE_WEBAPP_NAME" \
+            --resource-group "$resource_group" \
+            --settings "Authentication__Microsoft__ClientId=$VITE_MICROSOFT_CLIENT_ID" \
+              "Authentication__Microsoft__TenantId=$VITE_MICROSOFT_TENANT_ID" \
+            --output none
+
       - name: Deploy backend to App Service
         uses: azure/webapps-deploy@v3
         with:
