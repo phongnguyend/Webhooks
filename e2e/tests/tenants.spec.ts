@@ -1,0 +1,53 @@
+import { randomUUID } from 'node:crypto';
+import { test, expect } from '../support/fixtures';
+
+test('create, rename, disable, enable and delete a tenant through the UI', async ({ page, api, tenantIds }) => {
+  const name = `e2e-${randomUUID()}`;
+  await page.getByRole('button', { name: 'New tenant', exact: true }).click();
+  await page.getByLabel('Tenant name', { exact: true }).fill(name);
+  const created = page.waitForResponse(r => r.url().endsWith('/api/tenants') && r.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  const response = await created;
+  expect(response.status()).toBe(201);
+  const tenant = await response.json();
+  tenantIds.push(tenant.id);
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit tenant', exact: true }).click();
+  await page.getByLabel('Tenant name', { exact: true }).fill(`${name}-updated`);
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('heading', { name: `${name}-updated`, exact: true })).toBeVisible();
+  await page.locator('.header-actions').getByRole('button', { name: 'Disable', exact: true }).click();
+  await expect(page.locator('.header-actions').getByRole('button', { name: 'Enable', exact: true })).toBeVisible();
+  await page.locator('.header-actions').getByRole('button', { name: 'Enable', exact: true }).click();
+  await expect(page.locator('.header-actions').getByRole('button', { name: 'Disable', exact: true })).toBeVisible();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Delete tenant', exact: true }).click();
+  await expect(page.getByRole('heading', { name: `${name}-updated`, exact: true })).toHaveCount(0);
+  await expect.poll(async () => (await (await api.get('/api/tenants')).json()).some((t: { id: string }) => t.id === tenant.id)).toBe(false);
+});
+
+test('configure a queue route and echo SharePoint validation without sending to Service Bus', async ({ page, api, tenantIds }) => {
+  const name = `e2e-${randomUUID()}`;
+  const response = await api.post('/api/tenants', { data: { name, isEnabled: true } });
+  expect(response.status()).toBe(201);
+  const tenant = await response.json();
+  tenantIds.push(tenant.id);
+  await page.reload();
+  await page.locator('.tenant-row').filter({ hasText: name }).click();
+  await page.getByRole('button', { name: 'Add topic', exact: true }).first().click();
+  await page.getByLabel('Display name', { exact: true }).fill('E2E queue route');
+  await page.getByLabel('Route key', { exact: true }).fill('e2e-queue');
+  await page.getByPlaceholder('my-namespace.servicebus.windows.net').fill('e2e-unused.servicebus.windows.net');
+  await page.getByRole('button', { name: 'Queue Send to a Service Bus queue' }).click();
+  await page.getByPlaceholder('incoming-orders').fill('e2e-unused-queue');
+  await page.locator('label.toggle-row').filter({ hasText: 'SharePoint webhook' }).click();
+  await expect(page.getByRole('checkbox', { name: /SharePoint webhook/ })).toBeChecked();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'E2E queue route', exact: true })).toBeVisible();
+  const topics = await (await api.get(`/api/tenants/${tenant.id}/topics`)).json();
+  expect(topics).toHaveLength(1);
+  expect(topics[0]).toMatchObject({ serviceBusEntityType: 'Queue', serviceBusEntityName: 'e2e-unused-queue', isSharePointWebhook: true });
+  const validation = await api.post(`/tenants/${tenant.id}/topics/e2e-queue?validationtoken=e2e-token`);
+  expect(validation.status()).toBe(200);
+  expect(await validation.text()).toBe('e2e-token');
+});

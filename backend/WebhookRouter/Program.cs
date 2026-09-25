@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using WebhookRouter.Contracts;
 using WebhookRouter.Data;
@@ -19,10 +20,15 @@ builder.Services.AddDbContext<WebhookDbContext>(options => options.UseSqlServer(
 builder.Services.AddIdentity<AppUser, IdentityRole<Guid>>(options =>
     {
         options.User.RequireUniqueEmail = true;
-        options.SignIn.RequireConfirmedEmail = true;
+        // A verified email OR explicit administrator approval permits password sign-in.
+        options.SignIn.RequireConfirmedAccount = true;
+        options.Password.RequiredLength = 12;
+        options.Lockout.MaxFailedAccessAttempts = 5;
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
     })
     .AddEntityFrameworkStores<WebhookDbContext>()
     .AddDefaultTokenProviders();
+builder.Services.AddScoped<IUserConfirmation<AppUser>, PasswordAccountConfirmation>();
 var jwtSessions = new JwtSessionService(builder.Configuration);
 builder.Services.AddSingleton(jwtSessions);
 builder.Services.AddAuthentication(options =>
@@ -69,6 +75,16 @@ builder.Services.AddAuthorization(options => options.AddPolicy(AppRoles.ManageUs
 builder.Services.AddSingleton<ServiceBusPublisher>();
 builder.Services.AddSingleton<ConcurrentQueue<ReceivedRequest>>();
 builder.Services.AddSignalR();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddFixedWindowLimiter("password-auth", limiter =>
+    {
+        limiter.PermitLimit = 60;
+        limiter.Window = TimeSpan.FromMinutes(1);
+        limiter.QueueLimit = 0;
+    });
+});
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5173"])
     .AllowAnyHeader()
@@ -115,6 +131,8 @@ await using (var scope = app.Services.CreateAsyncScope())
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
+app.MapPasswordSignIn();
 if (microsoftEnabled) app.MapMicrosoftSignIn();
 app.MapGoogleSignIn();
 app.MapGet("/healthz", () => Results.Ok(new { status = "Healthy" }));
@@ -166,6 +184,10 @@ app.MapPut("/api/auth/me", async (UserProfileRequest request, ClaimsPrincipal pr
 var tenants = app.MapGroup("/api/tenants").RequireAuthorization();
 
 var users = app.MapGroup("/api/users").RequireAuthorization(AppRoles.ManageUsers);
+users.MapPut("/{userId:guid}/password-authentication", (Guid userId, ManagePasswordAuthenticationRequest request,
+    ClaimsPrincipal principal, UserManager<AppUser> manager, WebhookDbContext db, CancellationToken ct) =>
+    UserAdministration.SavePasswordAuthenticationAsync(userId, request, principal, manager, db, ct))
+    .RequireRateLimiting("password-auth");
 users.MapPost("/", (ManageUserRequest request, ClaimsPrincipal principal, UserManager<AppUser> manager, WebhookDbContext db, CancellationToken ct) =>
     UserAdministration.SaveAsync(null, request, principal, manager, db, ct));
 users.MapPut("/{userId:guid}", (Guid userId, ManageUserRequest request, ClaimsPrincipal principal, UserManager<AppUser> manager, WebhookDbContext db, CancellationToken ct) =>
@@ -174,12 +196,13 @@ users.MapGet("/", async (WebhookDbContext db, CancellationToken ct) =>
 {
     var accounts = await db.Users.AsNoTracking().OrderBy(x => x.Email)
         .Select(x => new { x.Id, username = x.UserName, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled,
+            x.AllowPasswordAuthentication, x.LockoutEnabled, x.LockoutEnd, x.AccessFailedCount, HasPassword = x.PasswordHash != null,
             HasExternalLogin = db.UserLogins.Any(login => login.UserId == x.Id) }).ToListAsync(ct);
     var memberships = await (from membership in db.UserRoles
         join role in db.Roles on membership.RoleId equals role.Id
         select new { membership.UserId, role.Name }).ToListAsync(ct);
     var rolesByUser = memberships.ToLookup(x => x.UserId, x => x.Name);
-    return Results.Ok(accounts.Select(x => new { x.Id, x.username, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled, x.HasExternalLogin, roles = rolesByUser[x.Id].ToArray() }));
+    return Results.Ok(accounts.Select(x => new { x.Id, x.username, x.Email, x.FirstName, x.LastName, x.PhoneNumber, x.IsEnabled, x.AllowPasswordAuthentication, x.LockoutEnabled, x.LockoutEnd, x.AccessFailedCount, x.HasPassword, x.HasExternalLogin, roles = rolesByUser[x.Id].ToArray() }));
 });
 users.MapPatch("/{userId:guid}/enabled", async (Guid userId, EnabledRequest request, ClaimsPrincipal principal, WebhookDbContext db, CancellationToken ct) =>
 {

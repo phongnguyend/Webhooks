@@ -79,6 +79,45 @@ public static class UserAdministration
         return id.HasValue ? Results.NoContent() : Results.Created($"/api/users/{account.Id}", new { account.Id });
     }
 
+
+    public static async Task<IResult> SavePasswordAuthenticationAsync(Guid id, ManagePasswordAuthenticationRequest request,
+        ClaimsPrincipal principal, UserManager<AppUser> manager, WebhookDbContext db, CancellationToken ct)
+    {
+        var hasNewPassword = !string.IsNullOrEmpty(request.Password);
+        if (hasNewPassword && (!request.AllowPasswordAuthentication || request.Password!.Length > 1024))
+            return Error("Enable password authentication before setting a password (maximum 1024 characters).");
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        var account = await manager.FindByIdAsync(id.ToString());
+        if (account is null) return Results.NotFound();
+        if (request.AllowPasswordAuthentication && !hasNewPassword && !await manager.HasPasswordAsync(account))
+            return Error("Set an initial password when enabling password authentication.");
+        if (id.ToString() == principal.FindFirstValue(ClaimTypes.NameIdentifier)
+            && account.AllowPasswordAuthentication && !request.AllowPasswordAuthentication
+            && (await manager.GetLoginsAsync(account)).Count == 0)
+            return Error("Connect an external login before disabling your own password authentication.");
+        var passwordAuthenticationChanged = account.AllowPasswordAuthentication != request.AllowPasswordAuthentication;
+        account.AllowPasswordAuthentication = request.AllowPasswordAuthentication;
+        var result = await manager.UpdateAsync(account);
+        if (!result.Succeeded) return Failure(result);
+        if (hasNewPassword)
+        {
+            if (await manager.HasPasswordAsync(account))
+            {
+                var resetToken = await manager.GeneratePasswordResetTokenAsync(account);
+                result = await manager.ResetPasswordAsync(account, resetToken, request.Password!);
+            }
+            else result = await manager.AddPasswordAsync(account, request.Password!);
+            if (!result.Succeeded) return Failure(result);
+        }
+        else if (passwordAuthenticationChanged)
+        {
+            result = await manager.UpdateSecurityStampAsync(account);
+            if (!result.Succeeded) return Failure(result);
+        }
+        await transaction.CommitAsync(ct);
+        return Results.NoContent();
+    }
+
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static IResult Error(string message) => Results.BadRequest(new { error = message });
     private static IResult Failure(IdentityResult result) => Error(string.Join(" ", result.Errors.Select(error => error.Description)));

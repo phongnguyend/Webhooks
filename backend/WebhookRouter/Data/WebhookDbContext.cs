@@ -21,6 +21,7 @@ public sealed class WebhookDbContext(DbContextOptions<WebhookDbContext> options)
             entity.Property(x => x.FirstName).HasMaxLength(100);
             entity.Property(x => x.LastName).HasMaxLength(100);
             entity.Property(x => x.IsEnabled).HasDefaultValue(true);
+            entity.Property(x => x.AllowPasswordAuthentication).HasDefaultValue(false);
         });
         modelBuilder.Entity<IdentityRole<Guid>>(entity =>
         {

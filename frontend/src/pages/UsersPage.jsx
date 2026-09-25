@@ -2,6 +2,17 @@ import { useEffect, useState } from 'react'
 import { Search, Users } from 'lucide-react'
 import './users.css'
 import UserEditor from '../components/UserEditor'
+import UserPasswordDialog from '../components/UserPasswordDialog'
+import UserDetailsDialog from '../components/UserDetailsDialog'
+
+function lockoutStatus(user, now) {
+  if (!user.lockoutEnabled) return 'Not enabled'
+  return user.lockoutEnd && Date.parse(user.lockoutEnd) > now ? 'Locked out' : 'Not locked'
+}
+
+function lockoutTime(value) {
+  return value ? new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'long' }) : 'None'
+}
 
 export default function UsersPage({ api, currentUser }) {
   const [users, setUsers] = useState([])
@@ -12,9 +23,17 @@ export default function UsersPage({ api, currentUser }) {
   const [notice, setNotice] = useState('')
   const [selected, setSelected] = useState(null)
   const [editor, setEditor] = useState(null)
+  const [passwordUser, setPasswordUser] = useState(null)
+  const [now, setNow] = useState(Date.now)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   async function saved() {
     setEditor(null)
+    setPasswordUser(null)
     setError('')
     setNotice('User saved.')
     try { setUsers(await api('/api/users')) }
@@ -50,11 +69,12 @@ export default function UsersPage({ api, currentUser }) {
     <label className="search-field"><Search size={17} /><span className="sr-only">Search users</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, email, phone, or role" /></label>
     {error && <p className="form-error" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
-    {loading ? <p role="status">Loading users…</p> : <div className="users-table-wrap"><table className="users-table"><thead><tr><th>Name</th><th>Email</th><th>Roles</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-      {filtered.map((user) => <tr key={user.id}><td>{[user.firstName, user.lastName].filter(Boolean).join(' ') || '—'}{user.id === currentUser.id && ' (you)'}</td><td>{user.email}</td><td>{user.roles.join(', ')}</td><td><span className={`status-badge ${user.isEnabled ? 'enabled' : ''}`}>{user.isEnabled ? 'Enabled' : 'Disabled'}</span></td><td><div className="header-actions"><button className="secondary-button" onClick={() => setSelected(user)}>View</button><button className="secondary-button" disabled={busyId !== null} onClick={() => setEditor({ user })}>Edit</button><button className="secondary-button" disabled={busyId !== null || user.id === currentUser.id} title={user.id === currentUser.id ? 'You cannot disable your own account' : undefined} onClick={() => toggle(user)}>{busyId === user.id ? 'Saving…' : user.isEnabled ? 'Disable' : 'Enable'}</button></div></td></tr>)}
-      {!filtered.length && <tr><td colSpan={5}>No users found.</td></tr>}
+    {loading ? <p role="status">Loading users…</p> : <div className="users-table-wrap"><table className="users-table"><thead><tr><th>Name</th><th>Email</th><th>Roles</th><th>Status</th><th>Password authentication</th><th>Lockout</th><th>Actions</th></tr></thead><tbody>
+      {filtered.map((user) => <tr key={user.id}><td>{[user.firstName, user.lastName].filter(Boolean).join(' ') || '—'}{user.id === currentUser.id && ' (you)'}</td><td>{user.email}</td><td>{user.roles.join(', ')}</td><td><span className={`status-badge ${user.isEnabled ? 'enabled' : ''}`}>{user.isEnabled ? 'Enabled' : 'Disabled'}</span></td><td><span className={`status-badge ${user.allowPasswordAuthentication ? 'enabled' : ''}`}>{user.allowPasswordAuthentication ? 'Enabled' : 'Disabled'}</span></td><td><div className="user-lockout"><span className={`status-badge ${lockoutStatus(user, now) === 'Locked out' ? 'locked-out' : ''}`}>{lockoutStatus(user, now)}</span>{lockoutStatus(user, now) === 'Locked out' && <small>Until {lockoutTime(user.lockoutEnd)}</small>}<small>Failed attempts: {user.accessFailedCount ?? 0}</small></div></td><td><div className="header-actions"><button className="secondary-button" onClick={() => setSelected(user)}>View</button><button className="secondary-button" disabled={busyId !== null} onClick={() => setEditor({ user })}>Edit</button><button className="secondary-button" disabled={busyId !== null} onClick={() => setPasswordUser(user)}>Password authentication</button><button className="secondary-button" disabled={busyId !== null || user.id === currentUser.id} title={user.id === currentUser.id ? 'You cannot disable your own account' : undefined} onClick={() => toggle(user)}>{busyId === user.id ? 'Saving…' : user.isEnabled ? 'Disable' : 'Enable'}</button></div></td></tr>)}
+      {!filtered.length && <tr><td colSpan={7}>No users found.</td></tr>}
     </tbody></table></div>}
-    {selected && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelected(null)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="user-details-title" onKeyDown={(event) => event.key === 'Escape' && setSelected(null)}><div className="modal-header"><h2 id="user-details-title">User details</h2><button autoFocus onClick={() => setSelected(null)} aria-label="Close">✕</button></div><dl className="modal-body user-details">{[['Name', [selected.firstName, selected.lastName].filter(Boolean).join(' ')], ['Email', selected.email], ['Username', selected.username], ['Phone', selected.phoneNumber], ['User ID', selected.id], ['Roles', selected.roles.join(', ')], ['Status', selected.isEnabled ? 'Enabled' : 'Disabled']].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || '—'}</dd></div>)}</dl><div className="modal-footer"><button className="primary-button" onClick={() => setSelected(null)}>Close</button></div></section></div>}
+    {selected && <UserDetailsDialog user={selected} lockoutStatus={lockoutStatus(selected, now)} lockoutEnd={lockoutTime(selected.lockoutEnd)} onClose={() => setSelected(null)} />}
+    {passwordUser && <UserPasswordDialog user={passwordUser} api={api} onSaved={saved} onClose={() => setPasswordUser(null)} />}
     {editor && <UserEditor user={editor.user} currentUser={currentUser} api={api} onSaved={saved} onClose={() => setEditor(null)} />}
   </section>
 }
