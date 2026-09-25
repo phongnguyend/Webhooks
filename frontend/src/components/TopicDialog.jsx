@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, Database, Pencil, Plus, Save } from 'lucide-react'
 import Dialog from './Dialog'
 import Field from './Field'
 import Toggle from './Toggle'
@@ -24,7 +24,7 @@ export default function TopicDialog({ item, onClose, onSave }) {
     window.setTimeout(() => setEntityCopied(false), 1600)
   }
 
-  return <Dialog title={item ? 'Edit topic route' : 'Add topic route'} onClose={onClose} onSubmit={() => onSave(form)}>
+  return <Dialog title={item ? 'Edit topic route' : 'Add topic route'} icon={item ? Pencil : Database} submitIcon={item ? Save : Plus} onClose={onClose} onSubmit={() => onSave(form)}>
     <div className="field-row"><Field label="Display name"><input required maxLength="200" autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Order events" /></Field><Field label="Route key"><input required maxLength="100" pattern="[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*" value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value.toLowerCase() })} placeholder="orders" /></Field></div>
     <fieldset className="auth-fieldset"><legend>Authentication</legend><div className="auth-options">
       <button type="button" className={form.useManagedIdentity ? 'active' : ''} onClick={() => setForm({ ...form, useManagedIdentity: true, serviceBusConnectionString: '' })}><strong>Managed Identity</strong><small>Use this application's Azure identity</small></button>

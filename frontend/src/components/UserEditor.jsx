@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Pencil, UserPlus, Save, X } from 'lucide-react'
 
 export default function UserEditor({ user, currentUser, api, onSaved, onClose }) {
   const [form, setForm] = useState({ email: user?.email || '', firstName: user?.firstName || '', lastName: user?.lastName || '', phoneNumber: user?.phoneNumber || '', isEnabled: user?.isEnabled ?? true, roles: user?.roles || ['User'] })
@@ -18,7 +19,7 @@ export default function UserEditor({ user, currentUser, api, onSaved, onClose })
   }
   return <div className="modal-backdrop" onMouseDown={(event) => !saving && event.target === event.currentTarget && onClose()}>
     <form className="modal" role="dialog" aria-modal="true" aria-labelledby="user-editor-title" onSubmit={submit} onKeyDown={(event) => event.key === 'Escape' && !saving && onClose()}>
-      <div className="modal-header"><h2 id="user-editor-title">{user ? 'Edit user' : 'Create user'}</h2><button type="button" className="icon-button" disabled={saving} onClick={onClose} aria-label="Close">×</button></div>
+      <div className="modal-header"><h2 className="user-dialog-title" id="user-editor-title">{user ? <Pencil size={19} aria-hidden="true" /> : <UserPlus size={19} aria-hidden="true" />}{user ? 'Edit user' : 'Create user'}</h2><button type="button" className="icon-button" disabled={saving} onClick={onClose} aria-label="Close"><X size={18} aria-hidden="true" /></button></div>
       <div className="modal-body">
         <p className="user-editor-help">Manage profile details, roles and account status here. Password authentication is managed separately from the Users list.</p>
         <label className="form-field">Email<input autoFocus type="email" required maxLength={256} value={form.email} readOnly={Boolean(user)} disabled={saving} onChange={(event) => field('email', event.target.value)} /></label>
@@ -31,7 +32,7 @@ export default function UserEditor({ user, currentUser, api, onSaved, onClose })
         {isSelf && <p className="user-editor-help">You cannot disable yourself or remove your own Global Admin role.</p>}
         {error && <p className="form-error" role="alert">{error}</p>}
       </div>
-      <div className="modal-footer"><button type="button" className="secondary-button" disabled={saving} onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? 'Saving…' : user ? 'Save changes' : 'Create user'}</button></div>
+      <div className="modal-footer"><button type="button" className="secondary-button" disabled={saving} onClick={onClose}><X size={15} aria-hidden="true" /> Cancel</button><button className="primary-button" disabled={saving}>{user ? <Save size={15} aria-hidden="true" /> : <UserPlus size={15} aria-hidden="true" />}{saving ? 'Saving…' : user ? 'Save changes' : 'Create user'}</button></div>
     </form>
   </div>
 }

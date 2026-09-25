@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, UserRound, X } from 'lucide-react'
 
 export default function UserDetailsDialog({ user, lockoutStatus, lockoutEnd, onClose }) {
   const [copiedField, setCopiedField] = useState('')
@@ -45,7 +45,7 @@ export default function UserDetailsDialog({ user, lockoutStatus, lockoutEnd, onC
 
   return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
     <section className="modal user-details-modal" role="dialog" aria-modal="true" aria-labelledby="user-details-title" onKeyDown={(event) => event.key === 'Escape' && onClose()}>
-      <div className="modal-header"><h2 id="user-details-title">User details</h2><button autoFocus onClick={onClose} aria-label="Close">×</button></div>
+      <div className="modal-header"><h2 className="user-dialog-title" id="user-details-title"><UserRound size={19} aria-hidden="true" />User details</h2><button autoFocus onClick={onClose} aria-label="Close"><X size={18} aria-hidden="true" /></button></div>
       <div className="user-details-content">
         {sections.map(([title, fields]) => <section className="user-details-section" key={title} aria-label={title}>
           <h3>{title}</h3>
@@ -64,7 +64,7 @@ export default function UserDetailsDialog({ user, lockoutStatus, lockoutEnd, onC
         <span className="sr-only" role="status">{copiedField ? `${copiedField} copied` : ''}</span>
         {copyError && <p className="form-error" role="alert">{copyError}</p>}
       </div>
-      <div className="modal-footer"><button className="primary-button" onClick={onClose}>Close</button></div>
+      <div className="modal-footer"><button className="primary-button" onClick={onClose}><X size={15} aria-hidden="true" /> Close</button></div>
     </section>
   </div>
 }

@@ -17,11 +17,15 @@ test('create, rename, disable, enable and delete a tenant through the UI', async
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByRole('heading', { name: `${name}-updated`, exact: true })).toBeVisible();
   await page.locator('.header-actions').getByRole('button', { name: 'Disable', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Disable tenant' }).getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('.header-actions').getByRole('button', { name: 'Disable', exact: true })).toBeVisible();
+  await page.locator('.header-actions').getByRole('button', { name: 'Disable', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Disable tenant' }).getByRole('button', { name: 'Disable tenant', exact: true }).click();
   await expect(page.locator('.header-actions').getByRole('button', { name: 'Enable', exact: true })).toBeVisible();
   await page.locator('.header-actions').getByRole('button', { name: 'Enable', exact: true }).click();
   await expect(page.locator('.header-actions').getByRole('button', { name: 'Disable', exact: true })).toBeVisible();
-  page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'Delete tenant', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Delete tenant' }).getByRole('button', { name: 'Delete tenant', exact: true }).click();
   await expect(page.getByRole('heading', { name: `${name}-updated`, exact: true })).toHaveCount(0);
   await expect.poll(async () => (await (await api.get('/api/tenants')).json()).some((t: { id: string }) => t.id === tenant.id)).toBe(false);
 });

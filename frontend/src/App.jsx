@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as signalR from '@microsoft/signalr'
 import LoginPage from './pages/LoginPage'
 import ConfigurationPage from './pages/ConfigurationPage'
+import useConfirmation from './components/useConfirmation'
 import EventsPage from './pages/EventsPage'
 import UsersPage from './pages/UsersPage'
 import AppHeader from './components/AppHeader'
@@ -51,6 +52,7 @@ function parsePayload(payload) {
 function eventId(event) { return event.id || `${event.receivedAt}-${event.tenantId}-${event.topicName}` }
 
 export default function App() {
+  const { confirm, confirmationDialog } = useConfirmation()
   const [accessToken, setAccessToken] = useState(null)
   const [initializingSession, setInitializingSession] = useState(true)
   const [user, setUser] = useState(null)
@@ -209,6 +211,7 @@ export default function App() {
   }
 
   async function toggleTenant(tenant) {
+    if (tenant.isEnabled && !await confirm({ title: 'Disable tenant', message: `Disable “${tenant.name}”? All webhook routes in this tenant will reject incoming requests until it is enabled again.`, confirmLabel: 'Disable tenant', destructive: true })) return
     try {
       await api(`/api/tenants/${tenant.id}/enabled`, { method: 'PATCH', body: JSON.stringify({ isEnabled: !tenant.isEnabled }) })
       await loadTenants(tenant.id)
@@ -216,6 +219,7 @@ export default function App() {
   }
 
   async function toggleTopic(topic) {
+    if (topic.isEnabled && !await confirm({ title: 'Disable topic', message: `Disable “${topic.name}”? This route will reject incoming webhooks until it is enabled again.`, confirmLabel: 'Disable topic', destructive: true })) return
     try {
       await api(`/api/tenants/${selectedTenantId}/topics/${topic.id}/enabled`, { method: 'PATCH', body: JSON.stringify({ isEnabled: !topic.isEnabled }) })
       await loadTopics(selectedTenantId)
@@ -223,7 +227,7 @@ export default function App() {
   }
 
   async function deleteTenant(tenant) {
-    if (!window.confirm(`Delete “${tenant.name}” and all of its topics?`)) return
+    if (!await confirm({ title: 'Delete tenant', message: `Delete “${tenant.name}” and all of its topics? This cannot be undone.`, confirmLabel: 'Delete tenant', destructive: true })) return
     try {
       await api(`/api/tenants/${tenant.id}`, { method: 'DELETE' })
       await loadTenants()
@@ -232,7 +236,7 @@ export default function App() {
   }
 
   async function deleteTopic(topic) {
-    if (!window.confirm(`Delete “${topic.name}”?`)) return
+    if (!await confirm({ title: 'Delete topic', message: `Delete “${topic.name}”? This cannot be undone.`, confirmLabel: 'Delete topic', destructive: true })) return
     try {
       await api(`/api/tenants/${selectedTenantId}/topics/${topic.id}`, { method: 'DELETE' })
       await Promise.all([loadTopics(selectedTenantId), loadTenants(selectedTenantId)])
@@ -312,6 +316,7 @@ export default function App() {
       {dialog?.type === 'topic' && <TopicDialog item={dialog.item} onClose={() => setDialog(null)} onSave={saveTopic} />}
       {dialog?.type === 'test' && <TestPayloadDialog tenantId={selectedTenantId} topic={dialog.item} onClose={() => setDialog(null)} onSend={sendTestPayload} />}
       {dialog?.type === 'profile' && <ProfileDialog user={user} onClose={() => setDialog(null)} onSave={saveProfile} onSignOut={logout} onConnectMicrosoft={microsoftEnabled ? () => signInMicrosoft(true) : null} />}
+      {confirmationDialog}
     </main>
   )
 }

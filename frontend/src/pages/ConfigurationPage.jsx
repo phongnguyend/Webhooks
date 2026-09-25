@@ -1,4 +1,4 @@
-import { Check, Copy, Database, Edit3, Layers3, Plus, Send, Trash2 } from 'lucide-react'
+import { Check, Copy, Database, Edit3, Layers3, Plus, Send, Trash2, Power, PowerOff } from 'lucide-react'
 import RecordTimestamps from '../components/RecordTimestamps'
 import Empty from '../components/Empty'
 import Status from '../components/Status'
@@ -29,7 +29,7 @@ export default function ConfigurationPage({ currentUser, tenants, selectedTenant
                     {copied ? <Check size={15} /> : <Copy size={15} />}
                     {copied ? 'Copied' : 'Copy tenant ID'}
                   </button>
-                  <button className="secondary-button" disabled={!canManage} onClick={() => toggleTenant(selectedTenant)}>{selectedTenant.isEnabled ? 'Disable' : 'Enable'}</button>
+                  <button className="secondary-button" disabled={!canManage} onClick={() => toggleTenant(selectedTenant)}>{selectedTenant.isEnabled ? <PowerOff size={15} aria-hidden="true" /> : <Power size={15} aria-hidden="true" />}{selectedTenant.isEnabled ? 'Disable' : 'Enable'}</button>
                   <button className="icon-button" disabled={!canManage} onClick={() => setDialog({ type: 'tenant', item: selectedTenant })} title="Edit tenant"><Edit3 size={17} /></button>
                   <button className="icon-button danger" disabled={!canManage} onClick={() => deleteTenant(selectedTenant)} title="Delete tenant"><Trash2 size={17} /></button>
                 </div>
@@ -42,7 +42,7 @@ export default function ConfigurationPage({ currentUser, tenants, selectedTenant
                   <div className="destination"><span>Azure Service Bus {(topic.serviceBusEntityType || 'Topic').toLowerCase()}</span><strong>{topic.serviceBusEntityName}</strong><small>{topic.useManagedIdentity ? topic.fullyQualifiedNamespace : 'Connection string credentials'}</small></div>
                   <div className="endpoint"><code>{API_URL}/tenants/{selectedTenant.id}/topics/{topic.key}</code><button onClick={() => copy(`${API_URL}/tenants/${selectedTenant.id}/topics/${topic.key}`)} title="Copy endpoint"><Copy size={14} /></button></div>
                   <RecordTimestamps createdAt={topic.createdAt} updatedAt={topic.updatedAt} createdByUser={topic.createdByUser} updatedByUser={topic.updatedByUser} />
-                  <div className="card-actions"><button disabled={!canManage} onClick={() => toggleTopic(topic)}>{topic.isEnabled ? 'Disable' : 'Enable'}</button><span /><button disabled={!canManage} onClick={() => setDialog({ type: 'test', item: topic })}><Send size={15} /> Test</button><button disabled={!canManage} onClick={() => setDialog({ type: 'topic', item: topic })}><Edit3 size={15} /> Edit</button><button className="danger-text" disabled={!canManage} onClick={() => deleteTopic(topic)}><Trash2 size={15} /></button></div>
+                  <div className="card-actions"><button disabled={!canManage} onClick={() => toggleTopic(topic)}>{topic.isEnabled ? <PowerOff size={15} aria-hidden="true" /> : <Power size={15} aria-hidden="true" />}{topic.isEnabled ? 'Disable' : 'Enable'}</button><span /><button disabled={!canManage} onClick={() => setDialog({ type: 'test', item: topic })}><Send size={15} /> Test</button><button disabled={!canManage} onClick={() => setDialog({ type: 'topic', item: topic })}><Edit3 size={15} /> Edit</button><button className="danger-text" disabled={!canManage} aria-label="Delete topic" title="Delete topic" onClick={() => deleteTopic(topic)}><Trash2 size={15} /></button></div>
                 </article>)}
                 {topics.length === 0 && <div className="wide-empty"><Empty icon={Database} title="No topic routes" text="Add a route and map it to an Azure Service Bus topic or queue." /><button className="primary-button" disabled={!canManage} onClick={() => setDialog({ type: 'topic', item: null })}><Plus size={16} /> Add topic</button></div>}
               </div>
