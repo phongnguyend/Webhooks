@@ -203,7 +203,8 @@ users.MapPatch("/{userId:guid}/enabled", async (Guid userId, EnabledRequest requ
 tenants.MapGet("/", async (ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
     var userId = GetUserId(user);
-    return await db.Tenants.AsNoTracking().Where(x => x.CreatedByUserId == userId).OrderBy(x => x.Name)
+    var isGlobalAdmin = user.IsInRole(AppRoles.GlobalAdmin);
+    return await db.Tenants.AsNoTracking().Where(x => isGlobalAdmin || x.CreatedByUserId == userId).OrderBy(x => x.Name)
         .Select(x => new TenantResponse(x.Id, x.Name, x.IsEnabled, x.CreatedAt, x.UpdatedAt, x.Topics.Count,
             new AuditUserResponse(x.CreatedByUser.Id, x.CreatedByUser.FirstName, x.CreatedByUser.LastName, x.CreatedByUser.Email),
             x.UpdatedByUser == null ? null : new AuditUserResponse(x.UpdatedByUser.Id, x.UpdatedByUser.FirstName, x.UpdatedByUser.LastName, x.UpdatedByUser.Email)))
@@ -264,7 +265,8 @@ tenants.MapDelete("/{tenantId:guid}", async (Guid tenantId, ClaimsPrincipal user
 tenants.MapGet("/{tenantId:guid}/topics", async (Guid tenantId, ClaimsPrincipal user, WebhookDbContext db, CancellationToken ct) =>
 {
     var userId = GetUserId(user);
-    if (!await db.Tenants.AnyAsync(x => x.Id == tenantId && x.CreatedByUserId == userId, ct)) return Results.NotFound();
+    var isGlobalAdmin = user.IsInRole(AppRoles.GlobalAdmin);
+    if (!await db.Tenants.AnyAsync(x => x.Id == tenantId && (isGlobalAdmin || x.CreatedByUserId == userId), ct)) return Results.NotFound();
     var topics = await db.Topics.AsNoTracking().Include(x => x.CreatedByUser).Include(x => x.UpdatedByUser)
         .Where(x => x.TenantId == tenantId).OrderBy(x => x.Name).ToListAsync(ct);
     return Results.Ok(topics.Select(ToTopicResponse));

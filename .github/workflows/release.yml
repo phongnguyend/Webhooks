@@ -47,18 +47,28 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           SWA_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
           FRONTEND_URL: ${{ vars.FRONTEND_URL }}
+          JWT_SIGNING_KEY: ${{ secrets.JWT_SIGNING_KEY }}
         run: |
           set -euo pipefail
           if [[ -n "$VITE_MICROSOFT_CLIENT_ID" && -z "$VITE_MICROSOFT_TENANT_ID" ]] || [[ -z "$VITE_MICROSOFT_CLIENT_ID" && -n "$VITE_MICROSOFT_TENANT_ID" ]]; then
             echo '::error::Configure both MICROSOFT_CLIENT_ID and MICROSOFT_TENANT_ID, or leave both unset.'
             exit 1
           fi
-          for name in AZURE_WEBAPP_NAME VITE_API_URL VITE_GOOGLE_CLIENT_ID AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID SWA_TOKEN FRONTEND_URL; do
+          for name in AZURE_WEBAPP_NAME VITE_API_URL VITE_GOOGLE_CLIENT_ID AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID SWA_TOKEN FRONTEND_URL JWT_SIGNING_KEY; do
             if [[ -z "${!name}" ]]; then
               echo "::error::Missing environment setting: $name"
               exit 1
             fi
           done
+          python3 - <<'PY'
+          import base64, binascii, os, sys
+          try:
+              key = base64.b64decode(''.join(os.environ['JWT_SIGNING_KEY'].split()), validate=True)
+          except (ValueError, binascii.Error):
+              sys.exit('::error::JWT_SIGNING_KEY must be valid base64.')
+          if len(key) < 32:
+              sys.exit('::error::JWT_SIGNING_KEY must contain at least 32 random bytes encoded as base64.')
+          PY
           for name in VITE_API_URL FRONTEND_URL; do
             if [[ ! "${!name}" =~ ^https://[^/]+$ ]]; then
               echo "::error::$name must be an HTTPS origin without a trailing slash or path."
@@ -95,8 +105,10 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Configure API Microsoft authentication
+      - name: Configure API authentication
         shell: bash
+        env:
+          JWT_SIGNING_KEY: ${{ secrets.JWT_SIGNING_KEY }}
         run: |
           set -euo pipefail
           resource_group=$(az resource list --name "$AZURE_WEBAPP_NAME" \
@@ -111,6 +123,7 @@ jobs:
             --resource-group "$resource_group" \
             --settings "Authentication__Microsoft__ClientId=$VITE_MICROSOFT_CLIENT_ID" \
               "Authentication__Microsoft__TenantId=$VITE_MICROSOFT_TENANT_ID" \
+              "Authentication__Jwt__SigningKey=$JWT_SIGNING_KEY" \
             --output none
 
       - name: Deploy backend to App Service

@@ -63,7 +63,7 @@ The DDL role is needed because the current API applies EF migrations on startup.
 
 ## Application deployment configuration
 
-The API now issues its own JWTs. Before releasing this version to existing resources, set `Authentication__Jwt__SigningKey` in App Service environment settings (or use a Key Vault reference), or redeploy Bicep with `JWT_SIGNING_KEY` supplied as above. Generate at least 32 cryptographically random bytes and base64-encode them; keep a separate stable key per environment. Never commit the value, put it in frontend `VITE_` variables, or print it in CI logs. Bicep accepts it as a secure parameter and configures environment-specific issuer/audience values. App startup fails if the signing key is missing or invalid. The application release workflow does not configure this secret; it must exist before deployment. See the root README for a key-generation example. No Azure settings are changed automatically by this code update.
+The API issues its own JWTs. The application release workflow validates the selected GitHub environment's `JWT_SIGNING_KEY` secret and sets `Authentication__Jwt__SigningKey` on the App Service before deployment. Generate at least 32 cryptographically random bytes and base64-encode them; keep a separate stable key per environment. Reuse that key on subsequent releases: changing it invalidates existing sessions. Never commit the value, put it in frontend `VITE_` variables, or print it in CI logs. For infrastructure deployments, supply the same key through the `JWT_SIGNING_KEY` environment variable as above. Bicep accepts it as a secure parameter and configures environment-specific issuer/audience values. App startup fails if the signing key is missing or invalid. See the root README for a key-generation example.
 
 - Publish the backend with `dotnet publish backend/WebhookRouter/WebhookRouter.csproj -c Release` and deploy its publish directory to the `appServiceName` output. The template configures SQL, Google client ID, CORS, HTTPS, WebSockets, and `/healthz`.
 - Build the frontend with the values in the `frontendBuildVariables` output and deploy `frontend/dist` to `staticWebAppName`. Vite embeds these values during the build; Static Web App runtime settings cannot change them. The CI build is a compilation check and is not an environment-configured deployment artifact.
@@ -91,6 +91,7 @@ Create GitHub environments named `dev` and `test` under repository **Settings â†
 | Secret | `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
 | Secret | `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
 | Secret | `GOOGLE_CLIENT_ID` | Same Google OAuth client ID configured on the API |
+| Secret | `JWT_SIGNING_KEY` | Required stable signing key: at least 32 random bytes encoded as base64; unique per environment |
 | Secret | `MICROSOFT_CLIENT_ID` | Optional Microsoft sign-in app registration client ID, applied to both the frontend and API |
 | Secret | `MICROSOFT_TENANT_ID` | Optional allowed sign-in tenant GUID; set together with Microsoft client ID |
 | Secret | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Deployment token from the target Static Web App's **Manage deployment token** page |

@@ -303,7 +303,7 @@ export default function App() {
       {notice && <div className={`toast ${notice.kind}`}><span>{notice.text}</span><button onClick={() => setNotice(null)} aria-label="Dismiss"><X size={15} /></button></div>}
 
       {view === 'users' && user.roles?.includes('Global Admin') ? <UsersPage api={api} currentUser={user} /> : view === 'manage' ? (
-        <ConfigurationPage tenants={tenants} selectedTenantId={selectedTenantId} setSelectedTenantId={setSelectedTenantId} selectedTenant={selectedTenant} topics={topics} loading={loading} copied={copied} copy={copy} setDialog={setDialog} toggleTenant={toggleTenant} deleteTenant={deleteTenant} toggleTopic={toggleTopic} deleteTopic={deleteTopic} />
+        <ConfigurationPage currentUser={user} tenants={tenants} selectedTenantId={selectedTenantId} setSelectedTenantId={setSelectedTenantId} selectedTenant={selectedTenant} topics={topics} loading={loading} copied={copied} copy={copy} setDialog={setDialog} toggleTenant={toggleTenant} deleteTenant={deleteTenant} toggleTopic={toggleTopic} deleteTopic={deleteTopic} />
       ) : (
         <EventsPage events={events} filteredEvents={filteredEvents} selectedEvent={selectedEvent} selectedEventId={selectedEventId} setSelectedEventId={setSelectedEventId} query={query} setQuery={setQuery} formattedPayload={formattedPayload} copied={copied} copy={copy} status={connectionStatus} />
       )}
