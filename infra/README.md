@@ -8,43 +8,46 @@ Defaults: B1 App Service, Free Static Web Apps, Basic SQL, Standard Service Bus.
 
 ### Naming and tags
 
-Set `namePrefix` (default `webhookrouter`). Resources use `<prefix>-<environment>-<stable-suffix>-<purpose>`, for example `webhookrouter-dev-<suffix>-api`, `-web`, `-plan`, `-sql`, and `-bus`. The database defaults to `<prefix>-<environment>-db`. Firewall rules and nested deployment names also include the project and environment.
+Set `workloadName` (default `webhookrouter`). Resources use `<workloadName>-<environment>-<stable-suffix>-<purpose>`, for example `webhookrouter-dev-<suffix>-api`, `-web`, `-plan`, `-sql`, and `-bus`. The database defaults to `<workloadName>-<environment>-db`. Firewall rules and nested deployment names also include the workload and environment.
 
-Every taggable resource receives `project` (the prefix), `application` (`WebhookRouter`), `environment`, `managedBy` (`Bicep`), and a resource-specific `component`. Set optional `additionalTags` in either parameter file, for example `{"owner": "platform-team", "costCenter": "engineering"}`. Identification tags cannot be overridden by those extra tags. Filter Azure Portal resources by `project=webhookrouter` and `environment=dev` to find this deployment.
+Every taggable resource receives `project` (the workload name), `application` (`WebhookRouter`), `environment`, `managedBy` (`Bicep`), and a resource-specific `component`. Set optional `additionalTags` in either parameter file, for example `{"owner": "platform-team", "costCenter": "engineering"}`. Identification tags cannot be overridden by those extra tags. Filter Azure Portal resources by `project=webhookrouter` and `environment=dev` to find this deployment.
 
 Child resources that do not support tags (Service Bus topics/queues, firewall rules, app settings, and role assignments) are identified through their parent. Service Bus entity names remain exactly as supplied so route configuration stays predictable.
 
-Keep the prefix stable after deploying: changing resource names creates new resources. If upgrading an existing deployment whose database is named `WebhookRouter`, explicitly set `sqlDatabaseName` to `WebhookRouter` to retain that database; the new prefixed default is for new deployments.
+Keep the workload name stable after deploying: changing resource names creates new resources. If upgrading an existing deployment whose database is named `WebhookRouter`, explicitly set `sqlDatabaseName` to `WebhookRouter` to retain that database; the workload-based default is for new deployments.
 
 Keep identity and Google client values as placeholders in the checked-in parameter files. Supply actual values through environment variables at deployment time; do not save them in JSON or documentation. The deploying identity needs resource creation and role assignment permissions (for example Contributor plus Role Based Access Control Administrator).
 
 ```powershell
 az login
 az account set --subscription <subscription-id>
-az group create --name rg-webhookrouter-dev --location southeastasia
 
 # Populate these environment variables locally or through your CI environment.
-# SQL_ADMINISTRATOR_PRINCIPAL_TYPE must be User or Group.
-$requiredVariables = @('SQL_ADMINISTRATOR_OBJECT_ID', 'SQL_ADMINISTRATOR_DISPLAY_NAME', 'SQL_ADMINISTRATOR_PRINCIPAL_TYPE', 'GOOGLE_CLIENT_ID', 'JWT_SIGNING_KEY')
+# SQL_ENTRA_ADMINISTRATOR_PRINCIPAL_TYPE must be User or Group.
+$requiredVariables = @('AZURE_RESOURCE_GROUP', 'AZURE_RESOURCE_GROUP_LOCATION', 'SQL_ENTRA_ADMINISTRATOR_OBJECT_ID', 'SQL_ENTRA_ADMINISTRATOR_NAME', 'SQL_ENTRA_ADMINISTRATOR_PRINCIPAL_TYPE', 'GOOGLE_CLIENT_ID', 'JWT_SIGNING_KEY')
 foreach ($variable in $requiredVariables) {
   if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($variable))) {
     throw "Missing environment variable: $variable"
   }
 }
+az group create --name $env:AZURE_RESOURCE_GROUP --location $env:AZURE_RESOURCE_GROUP_LOCATION
+
 $parameterOverrides = @(
-  "sqlAdministratorObjectId=$env:SQL_ADMINISTRATOR_OBJECT_ID"
-  "sqlAdministratorDisplayName=$env:SQL_ADMINISTRATOR_DISPLAY_NAME"
-  "sqlAdministratorPrincipalType=$env:SQL_ADMINISTRATOR_PRINCIPAL_TYPE"
+  "sqlEntraAdministratorObjectId=$env:SQL_ENTRA_ADMINISTRATOR_OBJECT_ID"
+  "sqlEntraAdministratorName=$env:SQL_ENTRA_ADMINISTRATOR_NAME"
+  "sqlEntraAdministratorPrincipalType=$env:SQL_ENTRA_ADMINISTRATOR_PRINCIPAL_TYPE"
   "googleClientId=$env:GOOGLE_CLIENT_ID"
   "jwtSigningKey=$env:JWT_SIGNING_KEY"
   "microsoftClientId=$env:MICROSOFT_CLIENT_ID"
   "microsoftTenantId=$env:MICROSOFT_TENANT_ID"
 )
-az deployment group what-if --resource-group rg-webhookrouter-dev --template-file infra/main.bicep --parameters '@infra/parameters.dev.json' @parameterOverrides
-az deployment group create --name webhookrouter-dev --resource-group rg-webhookrouter-dev --template-file infra/main.bicep --parameters '@infra/parameters.dev.json' @parameterOverrides
+az deployment group what-if --resource-group $env:AZURE_RESOURCE_GROUP --template-file infra/main.bicep --parameters '@infra/parameters.dev.json' @parameterOverrides
+az deployment group create --name webhookrouter-dev --resource-group $env:AZURE_RESOURCE_GROUP --template-file infra/main.bicep --parameters '@infra/parameters.dev.json' @parameterOverrides
 ```
 
-For test, use `rg-webhookrouter-test`, `webhookrouter-test`, and `@infra/parameters.test.json`. These commands provision infrastructure only; they do not publish application code.
+Set `AZURE_RESOURCE_GROUP` to the target resource group name and `AZURE_RESOURCE_GROUP_LOCATION` to its Azure region (for example, `southeastasia`). For an existing resource group, use its current location. Bicep defaults resource locations to the resource group's location unless overridden; Static Web Apps has a separate location parameter.
+
+For test, set these environment variables for the target resource group, use deployment name `webhookrouter-test`, and select `@infra/parameters.test.json`. These commands provision infrastructure only; they do not publish application code.
 
 ## One-time SQL access setup
 
@@ -84,17 +87,19 @@ Create GitHub environments named `dev` and `test` under repository **Settings â†
 
 | Type | Name | Value |
 | --- | --- | --- |
-| Variable | `AZURE_WEBAPP_NAME` | Bicep `appServiceName` output |
-| Variable | `API_URL` | Bicep `apiUrl` output, no trailing slash |
-| Variable | `FRONTEND_URL` | Bicep `frontendUrl` output or configured custom UI origin, no trailing slash |
-| Secret | `AZURE_CLIENT_ID` | Client ID of the release service principal or user-assigned managed identity |
 | Secret | `AZURE_TENANT_ID` | Microsoft Entra tenant ID |
 | Secret | `AZURE_SUBSCRIPTION_ID` | Target subscription ID |
+| Secret | `AZURE_CLIENT_ID` | Client ID of the release service principal or user-assigned managed identity |
+| Variable | `AZURE_RESOURCE_GROUP` | Target resource group name for infrastructure deployment |
+| Variable | `AZURE_RESOURCE_GROUP_LOCATION` | Resource group's Azure region, for example `southeastasia`; use the current location for an existing group |
+| Variable | `AZURE_WEBAPP_NAME` | Bicep `appServiceName` output |
+| Secret | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Deployment token from the target Static Web App's **Manage deployment token** page |
+| Variable | `API_URL` | Bicep `apiUrl` output, no trailing slash |
+| Variable | `FRONTEND_URL` | Bicep `frontendUrl` output or configured custom UI origin, no trailing slash |
 | Secret | `GOOGLE_CLIENT_ID` | Same Google OAuth client ID configured on the API |
-| Secret | `JWT_SIGNING_KEY` | Required stable signing key: at least 32 random bytes encoded as base64; unique per environment |
 | Secret | `MICROSOFT_CLIENT_ID` | Optional Microsoft sign-in app registration client ID, applied to both the frontend and API |
 | Secret | `MICROSOFT_TENANT_ID` | Optional allowed sign-in tenant GUID; set together with Microsoft client ID |
-| Secret | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Deployment token from the target Static Web App's **Manage deployment token** page |
+| Secret | `JWT_SIGNING_KEY` | Required stable signing key: at least 32 random bytes encoded as base64; unique per environment |
 
 Google's client ID is public in the built frontend, even when supplied as a GitHub secret. Never provide a Google client secret to Vite. The redirect URI is `FRONTEND_URL` plus `/`; register that exact URI with Google and configure the API's CORS origin accordingly.
 

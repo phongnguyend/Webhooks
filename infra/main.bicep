@@ -5,8 +5,8 @@ param environment string
 
 @minLength(3)
 @maxLength(20)
-@description('Project prefix for resource names. Use lowercase letters, digits and hyphens; start and end with a letter or digit.')
-param namePrefix string = 'webhookrouter'
+@description('Workload name used for resource naming and project tags. Use lowercase letters, digits and hyphens; start and end with a letter or digit.')
+param workloadName string = 'webhookrouter'
 
 @description('Optional ownership and billing tags, such as owner and costCenter. Reserved identification tags take precedence.')
 param additionalTags object = {}
@@ -17,16 +17,16 @@ param staticWebAppLocation string = 'eastasia'
 param appServicePlanSku string = 'B1'
 @allowed(['Free', 'Standard'])
 param staticWebAppSku string = 'Free'
-param sqlDatabaseName string = '${namePrefix}-${environment}-db'
+param sqlDatabaseName string = '${workloadName}-${environment}-db'
 param sqlDatabaseSku string = 'Basic'
 param sqlDatabaseTier string = 'Basic'
 @description('Object ID of the Microsoft Entra principal that will administer Azure SQL.')
 @minLength(36)
 @maxLength(36)
-param sqlAdministratorObjectId string
-param sqlAdministratorDisplayName string
+param sqlEntraAdministratorObjectId string
+param sqlEntraAdministratorName string
 @allowed(['Group', 'User'])
-param sqlAdministratorPrincipalType string = 'Group'
+param sqlEntraAdministratorPrincipalType string = 'Group'
 @description('Public Google OAuth web client ID shared by the API and frontend.')
 @minLength(1)
 param googleClientId string
@@ -45,9 +45,9 @@ param serviceBusTopics array = []
 param serviceBusQueues array = []
 
 var suffix = uniqueString(subscription().subscriptionId, resourceGroup().id, environment)
-var baseName = '${namePrefix}-${environment}-${suffix}'
+var baseName = '${workloadName}-${environment}-${suffix}'
 var tags = union(additionalTags, {
-  project: namePrefix
+  project: workloadName
   application: 'WebhookRouter'
   environment: environment
   managedBy: 'Bicep'
@@ -106,9 +106,9 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01' = {
     publicNetworkAccess: 'Enabled'
     administrators: {
       administratorType: 'ActiveDirectory'
-      principalType: sqlAdministratorPrincipalType
-      login: sqlAdministratorDisplayName
-      sid: sqlAdministratorObjectId
+      principalType: sqlEntraAdministratorPrincipalType
+      login: sqlEntraAdministratorName
+      sid: sqlEntraAdministratorObjectId
       tenantId: tenant().tenantId
       azureADOnlyAuthentication: true
     }
@@ -129,7 +129,7 @@ module sqlFirewall 'modules/sql-firewall.bicep' = {
   name: '${baseName}-sql-firewall'
   params: {
     serverName: sqlServer.name
-    ruleNamePrefix: '${namePrefix}-${environment}'
+    ruleNamePrefix: '${workloadName}-${environment}'
     outboundIpAddresses: split(api.properties.possibleOutboundIpAddresses, ',')
   }
 }
@@ -178,8 +178,8 @@ resource apiSettings 'Microsoft.Web/sites/config@2024-11-01' = {
     Authentication__Microsoft__ClientId: microsoftClientId
     Authentication__Microsoft__TenantId: microsoftTenantId
     Authentication__Jwt__SigningKey: jwtSigningKey
-    Authentication__Jwt__Issuer: '${namePrefix}-${environment}'
-    Authentication__Jwt__Audience: '${namePrefix}-${environment}-api'
+    Authentication__Jwt__Issuer: '${workloadName}-${environment}'
+    Authentication__Jwt__Audience: '${workloadName}-${environment}-api'
     ConnectionStrings__DefaultConnection: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Initial Catalog=${database.name};Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;Authentication=Active Directory Managed Identity;'
   }, toObject(range(0, length(frontendOrigins)), i => 'Cors__AllowedOrigins__${i}', i => frontendOrigins[i]))
 }

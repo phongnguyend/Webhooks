@@ -5,7 +5,7 @@
     "environment": {
       "value": "test"
     },
-    "namePrefix": {
+    "workloadName": {
       "value": "webhookrouter"
     },
     "additionalTags": {
@@ -23,10 +23,10 @@
     "staticWebAppSku": {
       "value": "Free"
     },
-    "sqlAdministratorObjectId": {
+    "sqlEntraAdministratorObjectId": {
       "value": "00000000-0000-0000-0000-000000000000"
     },
-    "sqlAdministratorDisplayName": {
+    "sqlEntraAdministratorName": {
       "value": "webhookrouter-test-sql-admins"
     },
     "googleClientId": {
