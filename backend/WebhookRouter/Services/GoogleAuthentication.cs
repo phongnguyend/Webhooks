@@ -27,7 +27,10 @@ public static class GoogleAuthentication
                 OnMessageReceived = context =>
                 {
                     if (context.Request.Path != "/api/auth/exchange/google" || !HttpMethods.IsPost(context.Request.Method))
+                    {
                         context.NoResult();
+                    }
+
                     return Task.CompletedTask;
                 },
                 OnTokenValidated = async context =>
@@ -40,7 +43,7 @@ public static class GoogleAuthentication
                         context.Fail("A verified Google email is required.");
                         return;
                     }
-    
+
                     var userManager = context.HttpContext.RequestServices.GetRequiredService<UserManager<AppUser>>();
                     var user = await userManager.FindByLoginAsync("Google", subject);
                     if (user is null)
@@ -65,16 +68,20 @@ public static class GoogleAuthentication
                             LastName = NormalizeProfileName(context.Principal?.FindFirstValue("family_name"))
                         };
                         var createResult = await userManager.CreateAsync(user);
-                        if (!createResult.Succeeded) { context.Fail("Unable to create the application user."); return; }
+                        if (!createResult.Succeeded)
+                        {
+                            context.Fail("Unable to create the application user.");
+                            return;
+                        }
                     }
-    
+
                     context.HttpContext.Items[ActivityAudit.TargetKey] = user;
                     if (!user.IsEnabled)
                     {
                         context.Fail("This account is disabled.");
                         return;
                     }
-    
+
                     var logins = await userManager.GetLoginsAsync(user);
                     if (logins.Any(x => x.LoginProvider == "Google" && x.ProviderKey != subject))
                     {
@@ -84,30 +91,48 @@ public static class GoogleAuthentication
                     if (logins.All(x => x.LoginProvider != "Google" || x.ProviderKey != subject))
                     {
                         var loginResult = await userManager.AddLoginAsync(user, new UserLoginInfo("Google", subject, "Google"));
-                        if (!loginResult.Succeeded) { context.Fail("Unable to link the Google account."); return; }
+                        if (!loginResult.Succeeded)
+                        {
+                            context.Fail("Unable to link the Google account.");
+                            return;
+                        }
                     }
-    
+
                     if (!user.EmailConfirmed && string.Equals(user.Email, email, StringComparison.OrdinalIgnoreCase))
                     {
                         user.EmailConfirmed = true;
                         var confirmed = await userManager.UpdateAsync(user);
-                        if (!confirmed.Succeeded) { context.Fail("Unable to confirm the application email."); return; }
+                        if (!confirmed.Succeeded)
+                        {
+                            context.Fail("Unable to confirm the application email.");
+                            return;
+                        }
                     }
-    
+
                     var roles = await userManager.GetRolesAsync(user);
                     if (roles.Count == 0)
                     {
                         var result = await userManager.AddToRoleAsync(user, AppRoles.User);
-                        if (!result.Succeeded) { context.Fail("Unable to assign the application role."); return; }
+                        if (!result.Succeeded)
+                        {
+                            context.Fail("Unable to assign the application role.");
+                            return;
+                        }
                         roles = await userManager.GetRolesAsync(user);
                     }
-    
+
                     if (context.Principal?.Identity is ClaimsIdentity identity)
                     {
                         foreach (var claim in identity.FindAll(ClaimTypes.NameIdentifier).Concat(identity.FindAll(identity.RoleClaimType)).ToArray())
+                        {
                             identity.RemoveClaim(claim);
+                        }
+
                         identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()));
-                        foreach (var role in roles) identity.AddClaim(new Claim(identity.RoleClaimType, role));
+                        foreach (var role in roles)
+                        {
+                            identity.AddClaim(new Claim(identity.RoleClaimType, role));
+                        }
                     }
                 }
             };
@@ -119,7 +144,11 @@ public static class GoogleAuthentication
         app.MapPost("/api/auth/exchange/google", async (HttpContext context, UserManager<AppUser> manager, JwtSessionService sessions) =>
         {
             var user = await manager.GetUserAsync(context.User);
-            if (user is null || !user.IsEnabled) return Results.Unauthorized();
+            if (user is null || !user.IsEnabled)
+            {
+                return Results.Unauthorized();
+            }
+
             context.Response.Headers.CacheControl = "no-store";
             context.Response.Headers.Pragma = "no-cache";
             return Results.Ok(sessions.Issue(user, await manager.GetRolesAsync(user)));

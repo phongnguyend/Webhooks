@@ -10,10 +10,15 @@ public static class RouteActivityAudit
     public static object State(Tenant tenant) => new { name = tenant.Name, isEnabled = tenant.IsEnabled };
     public static object State(Topic topic) => new
     {
-        tenantId = topic.TenantId, key = topic.Key, name = topic.Name, isEnabled = topic.IsEnabled,
-        isSharePointWebhook = topic.IsSharePointWebhook, useManagedIdentity = topic.UseManagedIdentity,
+        tenantId = topic.TenantId,
+        key = topic.Key,
+        name = topic.Name,
+        isEnabled = topic.IsEnabled,
+        isSharePointWebhook = topic.IsSharePointWebhook,
+        useManagedIdentity = topic.UseManagedIdentity,
         fullyQualifiedNamespace = topic.FullyQualifiedNamespace,
-        serviceBusEntityType = topic.ServiceBusEntityType, serviceBusEntityName = topic.ServiceBusEntityName
+        serviceBusEntityType = topic.ServiceBusEntityType,
+        serviceBusEntityName = topic.ServiceBusEntityName
     };
 
     public static void Add(WebhookDbContext db, string action, Tenant tenant, ClaimsPrincipal actor, object metadata)
@@ -21,5 +26,9 @@ public static class RouteActivityAudit
 
     public static void Add(WebhookDbContext db, string action, Topic topic, ClaimsPrincipal actor, object metadata)
         => ActivityAudit.Add(db, $"Topic{action}", "Topic", topic.Id.ToString(), topic.Name, actor,
-            new { tenantId = topic.TenantId, details = metadata });
+            new
+            {
+                tenantId = topic.TenantId,
+                details = metadata
+            });
 }

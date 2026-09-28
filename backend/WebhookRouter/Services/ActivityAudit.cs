@@ -30,8 +30,12 @@ public static class ActivityAudit
         Guid? actorId = Guid.TryParse(actor?.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : null;
         db.ActivityLogs.Add(new ActivityLog
         {
-            EventType = eventType, ActorUserId = actorId, ActorUsername = actor?.FindFirstValue("email"),
-            EntityType = entityType, EntityId = entityId, EntityName = entityName,
+            EventType = eventType,
+            ActorUserId = actorId,
+            ActorUsername = actor?.FindFirstValue("email"),
+            EntityType = entityType,
+            EntityId = entityId,
+            EntityName = entityName,
             Metadata = JsonSerializer.Serialize(metadata ?? new { })
         });
     }
@@ -47,7 +51,11 @@ public static class ActivityAudit
                 "/api/auth/exchange/microsoft" => "Microsoft",
                 _ => null
             };
-            if (provider is null || !HttpMethods.IsPost(context.Request.Method)) { await next(); return; }
+            if (provider is null || !HttpMethods.IsPost(context.Request.Method))
+            {
+                await next();
+                return;
+            }
             // Execute before response headers are sent. Failure to persist prevents token delivery.
             context.Response.OnStarting(async () =>
             {
@@ -58,8 +66,11 @@ public static class ActivityAudit
                 db.ActivityLogs.Add(new ActivityLog
                 {
                     EventType = succeeded ? "LoginSucceeded" : "LoginFailed",
-                    EntityType = "User", EntityId = target?.Id.ToString(), EntityName = target?.UserName,
-                    ActorUserId = succeeded ? target!.Id : null, ActorUsername = succeeded ? target!.UserName : null,
+                    EntityType = "User",
+                    EntityId = target?.Id.ToString(),
+                    EntityName = target?.UserName,
+                    ActorUserId = succeeded ? target!.Id : null,
+                    ActorUsername = succeeded ? target!.UserName : null,
                     Metadata = JsonSerializer.Serialize(new
                     {
                         provider,
@@ -68,7 +79,14 @@ public static class ActivityAudit
                     })
                 });
                 if (target is not null && context.Items[LockedKey] is true)
-                    Add(db, "UserLockedOut", target, metadata: new { provider, reason = "FailedPasswordAttempts" });
+                {
+                    Add(db, "UserLockedOut", target, metadata: new
+                    {
+                        provider,
+                        reason = "FailedPasswordAttempts"
+                    });
+                }
+
                 await db.SaveChangesAsync(CancellationToken.None);
             });
             await next();
@@ -84,23 +102,55 @@ public static class ActivityAudit
             var number = page ?? 1;
             var size = pageSize ?? 25;
             if (from.HasValue && to.HasValue && from.Value > to.Value)
-                return Results.BadRequest(new { error = "From must be earlier than or equal to To." });
+            {
+                return Results.BadRequest(new
+                {
+                    error = "From must be earlier than or equal to To."
+                });
+            }
+
             if (number < 1 || number > 100000 || size < 1 || size > 100 || search?.Length > 256
                 || entityType?.Length > 64 || entityId?.Length > 128
                 || (!string.IsNullOrEmpty(category) && !EventCategories.ContainsKey(category))
                 || (!string.IsNullOrEmpty(eventType) && !EventTypes.Contains(eventType)))
-                return Results.BadRequest(new { error = "Invalid activity log filter or page." });
+            {
+                return Results.BadRequest(new
+                {
+                    error = "Invalid activity log filter or page."
+                });
+            }
+
             var query = db.ActivityLogs.AsNoTracking();
-            if (from.HasValue) query = query.Where(x => x.OccurredAt >= from.Value);
-            if (to.HasValue) query = query.Where(x => x.OccurredAt <= to.Value);
+            if (from.HasValue)
+            {
+                query = query.Where(x => x.OccurredAt >= from.Value);
+            }
+
+            if (to.HasValue)
+            {
+                query = query.Where(x => x.OccurredAt <= to.Value);
+            }
+
             if (!string.IsNullOrEmpty(category))
             {
                 var categoryEvents = EventCategories[category];
                 query = query.Where(x => categoryEvents.Contains(x.EventType));
             }
-            if (!string.IsNullOrEmpty(eventType)) query = query.Where(x => x.EventType == eventType);
-            if (!string.IsNullOrWhiteSpace(entityType)) query = query.Where(x => x.EntityType == entityType);
-            if (!string.IsNullOrWhiteSpace(entityId)) query = query.Where(x => x.EntityId == entityId);
+            if (!string.IsNullOrEmpty(eventType))
+            {
+                query = query.Where(x => x.EventType == eventType);
+            }
+
+            if (!string.IsNullOrWhiteSpace(entityType))
+            {
+                query = query.Where(x => x.EntityType == entityType);
+            }
+
+            if (!string.IsNullOrWhiteSpace(entityId))
+            {
+                query = query.Where(x => x.EntityId == entityId);
+            }
+
             if (userId.HasValue)
             {
                 var idText = userId.Value.ToString();
@@ -118,7 +168,13 @@ public static class ActivityAudit
             var items = await query.OrderByDescending(x => x.OccurredAt).ThenByDescending(x => x.Id)
                 .Skip((number - 1) * size).Take(size).ToListAsync(ct);
             context.Response.Headers.CacheControl = "no-store";
-            return Results.Ok(new { items, total, page = number, pageSize = size });
+            return Results.Ok(new
+            {
+                items,
+                total,
+                page = number,
+                pageSize = size
+            });
         }).RequireAuthorization(AppRoles.ManageUsers);
     }
 }
